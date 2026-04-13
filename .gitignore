@@ -1,0 +1,12 @@
+.DS_Store
+.omx/
+__pycache__/
+*.py[cod]
+*.log
+.env
+.env.*
+*.local
+dist/
+out/
+tmp/
+examples/generated/

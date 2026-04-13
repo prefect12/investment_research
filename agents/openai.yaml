@@ -1,0 +1,4 @@
+interface:
+  display_name: "股票研究报告"
+  short_description: "todo 驱动、多 agent 并行、全量过程落盘的上市公司研究与 dossier 生成"
+  default_prompt: "使用 $equity-investment-dossier 对一家上市公司做多 agent 投资研究。先初始化本地 research bundle，以 todo 驱动推进；每轮搜索先记录 query 与候选结果，再把来源、提取、笔记、artifact 分层落盘，并在 review 后持续调整搜索方向，直到完成 dossier 组装与多页 HTML 报告。"
