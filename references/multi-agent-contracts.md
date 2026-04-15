@@ -7,7 +7,8 @@
 - **主 agent 管流程与父级 todo。**
 - **子 agent 管模块执行与候选问题。**
 - **所有搜索与研究过程先落本地 bundle。**
-- **最终 HTML 只在主 agent 完成组装后生成。**
+- **默认目标是公开源极限完整版，不要以较弱停止条件提前结束。**
+- **最终交付物默认是研究文档，只在主 agent 完成组装后生成。**
 
 ## 主 agent 职责
 
@@ -21,7 +22,8 @@
 6. 在 review 后更新搜索方向
 7. 接收子 agent 提交的候选 question todo，并决定是否落盘
 8. 合并模块 patch
-9. 运行校验、组装 dossier、渲染 HTML
+9. 清空 active todo，必要时把尾部 P1/P2 问题转成 non-blocking open questions
+10. 运行校验、组装 dossier、生成最终研究文档
 
 主 agent 不应该把所有正文都自己写完再反填 bundle。
 
@@ -56,6 +58,8 @@
 - `investor-master-views`
 - `sector-specialist`
 - `source-coverage-pass`
+- `counterevidence-pass`
+- `open-question-consolidation`
 - `final-assembly`
 
 ### 问题 todo（question）
@@ -85,9 +89,10 @@ question todo 用来驱动具体搜索与验证动作，例如：
 
 ### 关键要求
 
-- 不要只汇报“我看了很多网页”。要把 query、候选结果、来源、笔记、review 写到 bundle。
+- 不要只汇报“我看了很多来源”。要把 query、候选结果、来源、笔记、review 写到 bundle。
 - 不要只交最终答案。过程数据也要保存。
 - 不要在没有 review 的情况下机械堆搜索。
+- 默认不要把“能先出个版本”当作完成条件；要持续循环直到 gate 满足。
 
 ## 返回信封
 
@@ -190,7 +195,7 @@ question todo 用来驱动具体搜索与验证动作，例如：
 - 同一事实冲突时优先保留一级来源
 - 一级来源之间冲突时显式写入 `conflicts`
 - 找不到资料就写 `gaps`，不要沉默跳过
-- 不要让子 agent 直接写最终 HTML prose
+- 不要让子 agent 直接写最终交付文档正文
 
 ## 推荐协作节奏
 

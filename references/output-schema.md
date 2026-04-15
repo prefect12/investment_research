@@ -1,10 +1,18 @@
 # Dossier 输出 Schema
 
-用这个文件约束结构化 dossier JSON。默认流程应先完成 `research bundle`，再从 bundle 组装 dossier，最后渲染页面。
+用这个文件约束结构化 dossier JSON。默认流程应先把 `research bundle` 推进到公开源极限版完成门槛，再从 bundle 组装 dossier，最后生成单文件最终报告。
+
+## 结构约束
+
+- 当前不再依赖 `dossier_version`
+- 只接受新的 dossier 结构
+- 不兼容旧 dossier
+- 必须显式包含 `report_brief`、`report_method`、`investor_lenses`
+- 不接受旧字段 `investor_master_views`
 
 ## 顶层字段
 
-新版本默认应包含 `report_brief`、`report_method` 和 `investor_lenses`。
+当前 schema 必须包含 `report_brief`、`report_method` 和 `investor_lenses`。
 
 ```json
 {
@@ -25,6 +33,7 @@
   "crisis_archive": {},
   "debate": {},
   "investor_lenses": {},
+  "research_process": {},
   "open_questions": {},
   "sources": {}
 }
@@ -315,7 +324,7 @@
 
 ### `sources.items`
 
-完整报告默认应至少提供约 100 条 `sources.items`，并覆盖多个来源 bucket；如果只有十几条来源，应视为草稿而不是完整成品。
+完整报告默认应至少提供约 100 条 `sources.items`，并覆盖多个来源 bucket；如果只有十几条来源，说明研究仍处于早期收集阶段，不能视为完成交付。
 
 ```json
 {
@@ -362,9 +371,9 @@
 }
 ```
 
-## 页面固定区块
+## 报告固定章节
 
-页面按固定区块渲染：
+最终报告按固定章节组织：
 
 1. 结论面板
 2. 当前状态快照

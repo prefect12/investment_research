@@ -11,8 +11,6 @@ from typing import Any
 
 from dossier_schema import dossier_slug
 
-BUNDLE_VERSION = 3
-
 ALLOWED_TODO_KINDS = {
     "source-gathering",
     "fact-verification",
@@ -23,7 +21,7 @@ ALLOWED_TODO_LEVELS = {"parent", "question"}
 ALLOWED_TODO_STAGES = {"foundation", "module", "gap_close", "assembly"}
 ALLOWED_TODO_PRIORITIES = {"P0", "P1", "P2"}
 ALLOWED_TODO_STATUSES = {"todo", "in_progress", "done", "blocked", "dropped"}
-ALLOWED_SEARCH_OUTCOMES = {"no_hit", "duplicate", "lead", "evidence", "counterevidence"}
+ALLOWED_SEARCH_OUTCOMES = {"pending", "no_hit", "duplicate", "lead", "evidence", "counterevidence"}
 USEFUL_SEARCH_OUTCOMES = {"lead", "evidence", "counterevidence"}
 ALLOWED_RESULT_DISPOSITIONS = {"candidate", "opened", "skipped", "duplicate", "discarded", "promoted"}
 ALLOWED_SOURCE_STAGES = {"candidate", "captured", "downloaded", "extracted", "promoted"}
@@ -78,6 +76,19 @@ DEFAULT_MINIMUM_SOURCE_BUCKETS = [
     "市场与估值数据",
 ]
 
+DEFAULT_REQUIRED_VALIDATION_STEPS = ["bundle", "dossier", "render"]
+VALIDATION_STEP_REQUIREMENTS = {
+    "bundle": {"validation-bundle"},
+    "dossier": {"dossier-json", "validation-dossier"},
+    "render": {"rendered-report"},
+}
+LEGACY_COMPLETION_GATE_KEYS = {
+    "required_modules",
+    "minimum_source_buckets",
+    "minimum_promoted_sources",
+    "must_resolve_priorities",
+}
+
 DEFAULT_PARENT_TODO_BLUEPRINTS: list[dict[str, Any]] = [
     {
         "id": "todo-foundation-primary-sources",
@@ -89,7 +100,8 @@ DEFAULT_PARENT_TODO_BLUEPRINTS: list[dict[str, Any]] = [
         "priority": "P0",
         "done_criteria": [
             "已建立 filing / earnings / IR / management / market data 的基础来源池",
-            "至少完成一轮 useful search 与方向复盘",
+            "foundation question todos 已全部关闭",
+            "至少完成五轮 useful search 与方向复盘",
         ],
     },
     {
@@ -101,7 +113,7 @@ DEFAULT_PARENT_TODO_BLUEPRINTS: list[dict[str, Any]] = [
         "stage": "module",
         "priority": "P1",
         "done_criteria": [
-            "已形成 era 划分与关键时间线草稿",
+            "已形成 era 划分与关键时间线",
             "重大转折已有来源支撑",
         ],
     },
@@ -250,9 +262,36 @@ DEFAULT_PARENT_TODO_BLUEPRINTS: list[dict[str, Any]] = [
         ],
     },
     {
+        "id": "todo-counterevidence-pass",
+        "module": "counterevidence-pass",
+        "title": "完成关键反证搜索与多空争议回看",
+        "kind": "gap-followup",
+        "level": "parent",
+        "stage": "gap_close",
+        "priority": "P1",
+        "done_criteria": [
+            "核心 bull / bear 结论都至少做过一轮反证搜索",
+            "重要反例与未证伪点已记录到 bundle 或开放问题",
+        ],
+    },
+    {
+        "id": "todo-open-question-consolidation",
+        "module": "open-question-consolidation",
+        "title": "收敛尾部问题并转成非阻塞开放问题",
+        "kind": "gap-followup",
+        "level": "parent",
+        "stage": "gap_close",
+        "priority": "P1",
+        "depends_on": ["todo-source-coverage", "todo-counterevidence-pass"],
+        "done_criteria": [
+            "所有剩余 P1/P2 question todo 均已关闭",
+            "无法继续收敛但仍值得跟踪的问题已转入 non-blocking open questions",
+        ],
+    },
+    {
         "id": "todo-dossier-assembly",
         "module": "final-assembly",
-        "title": "完成 dossier 组装、校验与 HTML 渲染",
+        "title": "完成 dossier 组装、校验与最终报告生成",
         "kind": "module-synthesis",
         "level": "parent",
         "stage": "assembly",
@@ -262,11 +301,15 @@ DEFAULT_PARENT_TODO_BLUEPRINTS: list[dict[str, Any]] = [
             "todo-industry-competition",
             "todo-financial-quality",
             "todo-market-valuation",
+            "todo-source-coverage",
+            "todo-counterevidence-pass",
+            "todo-open-question-consolidation",
         ],
         "done_criteria": [
             "bundle 校验通过",
+            "dossier 已完成组装并落盘",
             "dossier 校验通过",
-            "多页 HTML 已生成并可检查",
+            "最终研究报告已生成并可检查",
         ],
     },
 ]
@@ -327,6 +370,14 @@ DEFAULT_QUESTION_TODO_BLUEPRINTS: list[dict[str, Any]] = [
         "priority": "P1",
         "done_criteria": ["价格、估值和共识预期来源已建立最小覆盖"],
     },
+]
+
+DEFAULT_FOUNDATION_QUESTION_TODO_IDS = [item["id"] for item in DEFAULT_QUESTION_TODO_BLUEPRINTS]
+DEFAULT_REPORT_REQUIRED_PARENT_TODOS = [
+    "todo-source-coverage",
+    "todo-counterevidence-pass",
+    "todo-open-question-consolidation",
+    "todo-dossier-assembly",
 ]
 
 EMPTY_DOSSIER_TEMPLATE: dict[str, Any] = {
@@ -417,7 +468,6 @@ EMPTY_DOSSIER_TEMPLATE: dict[str, Any] = {
 }
 
 REQUIRED_BUNDLE_KEYS = [
-    "bundle_version",
     "created_at",
     "updated_at",
     "dossier_seed",
@@ -440,6 +490,7 @@ REQUIRED_WORKFLOW_KEYS = [
     "todo_items",
     "search_journal",
     "review_cycles",
+    "non_blocking_open_questions",
     "current_stage",
     "completion_gates",
     "next_actions",
@@ -473,7 +524,8 @@ def default_bundle_dir(
 ) -> Path:
     if output_dir:
         return Path(output_dir).expanduser()
-    return Path(base_dir).expanduser() / dossier_slug(dossier_seed) / "research-bundle"
+    run_id = datetime.now().strftime("%Y%m%dT%H%M%S%f")
+    return Path(base_dir).expanduser() / dossier_slug(dossier_seed) / f"run-{run_id}" / "research-bundle"
 
 
 def default_todo_markdown_path(path: str | Path) -> Path:
@@ -506,6 +558,11 @@ def load_bundle(path: str | Path) -> dict[str, Any]:
         data = json.load(handle)
     if not isinstance(data, dict):
         raise ValueError("research bundle 顶层必须是 JSON 对象")
+    workflow = data.get("workflow")
+    if isinstance(workflow, dict):
+        completion_gates = workflow.get("completion_gates")
+        if isinstance(completion_gates, dict) and any(key in completion_gates for key in LEGACY_COMPLETION_GATE_KEYS):
+            raise ValueError("检测到旧 completion_gates 扁平字段；当前只支持新的嵌套 completion_gates schema，请重新初始化新 bundle。")
     return data
 
 
@@ -520,7 +577,6 @@ def save_bundle(bundle: dict[str, Any], path: str | Path) -> Path:
 
 def init_bundle(dossier_seed: dict[str, Any]) -> dict[str, Any]:
     bundle = {
-        "bundle_version": BUNDLE_VERSION,
         "created_at": timestamp_iso(),
         "updated_at": timestamp_iso(),
         "dossier_seed": deep_merge(EMPTY_DOSSIER_TEMPLATE, dossier_seed),
@@ -536,6 +592,7 @@ def init_workflow() -> dict[str, Any]:
         "todo_items": [_normalize_todo_item(item) for item in DEFAULT_PARENT_TODO_BLUEPRINTS + DEFAULT_QUESTION_TODO_BLUEPRINTS],
         "search_journal": [],
         "review_cycles": [],
+        "non_blocking_open_questions": [],
         "current_stage": "initialized",
         "completion_gates": _normalize_completion_gates({}),
         "next_actions": [],
@@ -554,6 +611,7 @@ def refresh_bundle_state(bundle: dict[str, Any]) -> dict[str, Any]:
     workflow["todo_items"] = _normalize_todo_items(workflow.get("todo_items", []))
     workflow["search_journal"] = _normalize_search_journal(workflow.get("search_journal", []))
     workflow["review_cycles"] = _normalize_review_cycles(workflow.get("review_cycles", []))
+    workflow["non_blocking_open_questions"] = _normalize_non_blocking_open_questions(workflow.get("non_blocking_open_questions", []), bundle=bundle)
     workflow["completion_gates"] = _normalize_completion_gates(workflow.get("completion_gates", {}))
     workflow["current_stage"] = _determine_current_stage(bundle)
     workflow["summary"] = _build_workflow_summary(bundle)
@@ -572,9 +630,6 @@ def validate_bundle(bundle: dict[str, Any]) -> tuple[list[str], list[str]]:
 
     if errors:
         return errors, warnings
-
-    if bundle.get("bundle_version") != BUNDLE_VERSION:
-        warnings.append(f"bundle_version={bundle.get('bundle_version')}，当前脚本期望 {BUNDLE_VERSION}")
 
     dossier_seed = bundle.get("dossier_seed")
     if not isinstance(dossier_seed, dict):
@@ -688,6 +743,36 @@ def validate_bundle(bundle: dict[str, Any]) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def _record_identity(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    for key in ["id", "path", "saved_path", "note", "query"]:
+        value = str(item.get(key, "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def _merge_record_items(base: list[Any], patch: list[Any]) -> list[Any]:
+    merged = [deepcopy(item) for item in base]
+    index_by_key: dict[str, int] = {}
+    for index, item in enumerate(merged):
+        key = _record_identity(item)
+        if key:
+            index_by_key[key] = index
+
+    for item in patch:
+        copied = deepcopy(item)
+        key = _record_identity(copied)
+        if key and key in index_by_key:
+            merged[index_by_key[key]] = copied
+            continue
+        if key:
+            index_by_key[key] = len(merged)
+        merged.append(copied)
+    return merged
+
+
 def append_research_assets(
     bundle: dict[str, Any],
     *,
@@ -715,7 +800,7 @@ def append_research_assets(
         "artifact_records": list(artifact_records or []),
     }
     for key, records in payload_map.items():
-        assets[key] = merge_list_values(assets.get(key, []), records, ("research_assets", key))
+        assets[key] = _merge_record_items(assets.get(key, []), records)
     return refresh_bundle_state(bundle)
 
 
@@ -769,6 +854,63 @@ def update_todo_items(
             item["notes"] = merge_list_values(item.get("notes", []), note_updates[todo_id], ("workflow", "todo_items", "notes"))
             item["last_updated"] = timestamp_iso()
     return refresh_bundle_state(bundle)
+
+
+def append_non_blocking_open_questions(bundle: dict[str, Any], items: list[dict[str, Any]]) -> list[str]:
+    if not items:
+        return []
+    workflow = bundle.setdefault("workflow", init_workflow())
+    existing = workflow.get("non_blocking_open_questions", [])
+    normalized_items = [
+        _normalize_non_blocking_open_question(item, bundle=bundle)
+        for item in items
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    ]
+    workflow["non_blocking_open_questions"] = merge_list_values(
+        existing,
+        normalized_items,
+        ("workflow", "non_blocking_open_questions"),
+    )
+    refresh_bundle_state(bundle)
+    return [str(item.get("id", "")).strip() for item in normalized_items if str(item.get("id", "")).strip()]
+
+
+def append_artifact_record(
+    bundle: dict[str, Any],
+    *,
+    owner: str = "main-agent",
+    module: str = "final-assembly",
+    path: str = "",
+    kind: str = "artifact-file",
+    title: str = "",
+    note: str = "",
+    todo_ids: list[str] | None = None,
+    search_id: str = "",
+    query_id: str = "",
+    result_id: str = "",
+    source_id: str = "",
+    layer: str = "artifacts",
+    value_tier: str = "useful",
+) -> dict[str, Any]:
+    artifact = _normalize_artifact_record(
+        {
+            "owner": owner,
+            "module": module,
+            "path": path,
+            "kind": kind,
+            "title": title,
+            "note": note,
+            "todo_ids": todo_ids or [],
+            "search_id": search_id,
+            "query_id": query_id,
+            "result_id": result_id,
+            "source_id": source_id,
+            "layer": layer,
+            "value_tier": value_tier,
+        }
+    )
+    append_research_assets(bundle, artifact_records=[artifact])
+    return artifact
 
 
 def link_research_to_todo(
@@ -939,10 +1081,12 @@ def assemble_dossier(bundle: dict[str, Any]) -> dict[str, Any]:
     dossier["sources"]["items"] = merge_list_values(dossier["sources"]["items"], dossier_sources, ("sources", "items"))
 
     limitations = dossier.setdefault("report_method", {}).setdefault("limitations", [])
-    if all_gaps:
-        limitations = merge_list_values(limitations, [f"研究缺口：{item}" for item in all_gaps], ("report_method", "limitations"))
-    if all_conflicts:
-        limitations = merge_list_values(limitations, [f"待核冲突：{item}" for item in all_conflicts], ("report_method", "limitations"))
+    if all_gaps or all_conflicts:
+        limitations = merge_list_values(
+            limitations,
+            ["剩余未完全收敛的问题已转入开放问题清单，后续需持续跟踪验证。"],
+            ("report_method", "limitations"),
+        )
     dossier["report_method"]["limitations"] = limitations
 
     info_collected = dossier.setdefault("report_method", {}).setdefault("information_collected", [])
@@ -965,6 +1109,18 @@ def assemble_dossier(bundle: dict[str, Any]) -> dict[str, Any]:
     decision_steps = dossier.setdefault("report_method", {}).setdefault("decision_steps", [])
     decision_steps = merge_list_values(decision_steps, _decision_step_summaries(normalized_bundle), ("report_method", "decision_steps"))
     dossier["report_method"]["decision_steps"] = decision_steps
+
+    open_question_items = _merge_open_question_items(
+        dossier.setdefault("open_questions", {}).setdefault("items", []),
+        _build_dossier_open_question_items(normalized_bundle, all_gaps=all_gaps, all_conflicts=all_conflicts),
+    )
+    dossier["open_questions"]["items"] = open_question_items
+    dossier.setdefault("summary", {}).setdefault("open_questions", [])
+    dossier["summary"]["open_questions"] = merge_list_values(
+        dossier["summary"]["open_questions"],
+        [str(item.get("text", "")).strip() for item in open_question_items if str(item.get("text", "")).strip()],
+        ("summary", "open_questions"),
+    )
 
     dossier["research_process"] = assemble_research_process(normalized_bundle)
     return dossier
@@ -1061,7 +1217,7 @@ def assemble_research_process(bundle: dict[str, Any]) -> dict[str, Any]:
     workflow_summary = (
         f"这次研究采用 todo 驱动 + 全量过程落盘的闭环流程推进。当前阶段为 {workflow.get('current_stage', 'initialized')}，"
         f"累计记录 query {layer_counts['query_records']} 轮、候选结果 {layer_counts['result_records']} 条、review {layer_counts['review_records']} 次，"
-        f"promoted 来源 {summary.get('promoted_source_count', 0)} 条。"
+        f"promoted 来源 {summary.get('promoted_source_count', 0)} 条，非阻塞开放问题 {summary.get('non_blocking_open_question_count', 0)} 条。"
     )
 
     return {
@@ -1132,9 +1288,18 @@ def bundle_progress(bundle: dict[str, Any]) -> dict[str, Any]:
         "question_todo_total": int(summary.get("question_todo_total", 0)),
         "open_p0_count": int(summary.get("open_p0_count", 0)),
         "open_p1_count": int(summary.get("open_p1_count", 0)),
+        "open_p2_count": int(summary.get("open_p2_count", 0)),
+        "active_todo_count": int(summary.get("active_todo_count", 0)),
         "completion_percent": int(summary.get("completion_percent", 0)),
         "useful_search_count": int(summary.get("useful_search_count", 0)),
+        "pending_search_count": int(summary.get("pending_search_count", 0)),
         "promoted_source_count": int(summary.get("promoted_source_count", 0)),
+        "non_blocking_open_question_count": int(summary.get("non_blocking_open_question_count", 0)),
+        "completed_validation_steps": list(summary.get("completed_validation_steps", [])),
+        "missing_validation_steps": list(summary.get("missing_validation_steps", [])),
+        "foundation_ready_missing": list(summary.get("foundation_ready_missing", [])),
+        "module_ready_missing": list(summary.get("module_ready_missing", [])),
+        "report_ready_missing": list(summary.get("report_ready_missing", [])),
         "current_stage": str(summary.get("current_stage", workflow.get("current_stage", "initialized"))).strip(),
         "research_started": bool(summary.get("research_started", False)),
         "foundation_ready": bool(summary.get("foundation_ready", False)),
@@ -1230,7 +1395,10 @@ def render_todo_markdown(bundle: dict[str, Any]) -> str:
         f"- 父级完成度: {summary.get('completion_percent', 0)}%",
         f"- 报告就绪: {'是' if summary.get('report_ready') else '否'}",
         f"- Query / Result / Review: {summary.get('query_count', 0)} / {summary.get('result_count', 0)} / {summary.get('review_count', 0)}",
+        f"- Pending Searches: {summary.get('pending_search_count', 0)}",
         f"- Promoted Sources: {summary.get('promoted_source_count', 0)}",
+        f"- Active Todos: {summary.get('active_todo_count', 0)}",
+        f"- Non-blocking Open Questions: {summary.get('non_blocking_open_question_count', 0)}",
         "",
         "## 下一步动作",
     ]
@@ -1260,6 +1428,20 @@ def render_todo_markdown(bundle: dict[str, Any]) -> str:
             parent_id = str(item.get("parent_id", "")).strip()
             lines.append(f"- [{item.get('priority', 'P1')}] {item.get('title', '')} (`{item.get('module', '')}` / parent={parent_id or 'none'})")
 
+    lines.extend(["", "## 非阻塞开放问题"])
+    non_blocking_open_questions = workflow.get("non_blocking_open_questions", []) if isinstance(workflow, dict) else []
+    if not non_blocking_open_questions:
+        lines.append("- 当前还没有已归档的非阻塞开放问题。")
+    else:
+        for item in non_blocking_open_questions[:12]:
+            if not isinstance(item, dict):
+                continue
+            lines.append(
+                "- "
+                f"[{item.get('priority', 'P2')}] {item.get('text', '')} "
+                f"(from={item.get('from_todo_id', '') or 'n/a'} / module={item.get('module', '') or 'n/a'})"
+            )
+
     lines.extend(["", "## 最近搜索循环"])
     if not search_journal:
         lines.append("- 尚无搜索记录。")
@@ -1285,6 +1467,214 @@ def render_todo_markdown(bundle: dict[str, Any]) -> str:
     lines.extend(["", "## 完成判定"])
     lines.append(f"- {_build_completion_reason(normalized)}")
     return "\n".join(lines).strip() + "\n"
+
+
+def infer_checkpoint_stage(bundle: dict[str, Any]) -> str:
+    workflow = bundle.get("workflow", {})
+    todo_items = [item for item in workflow.get("todo_items", []) if isinstance(item, dict)] if isinstance(workflow, dict) else []
+    for item in _sort_open_todos(todo_items):
+        stage = str(item.get("stage", "")).strip()
+        if stage in ALLOWED_TODO_STAGES:
+            return stage
+
+    current_stage = str(workflow.get("current_stage", "")).strip()
+    if current_stage in {"initialized", "research_started", "foundation_ready"}:
+        return "foundation"
+    if current_stage == "module_ready":
+        return "module"
+    if current_stage == "report_ready":
+        return "assembly"
+    return "module"
+
+
+def build_bundle_checkpoint(bundle: dict[str, Any], bundle_path: str | Path) -> dict[str, Any]:
+    bundle_path_obj = bundle_path_from_input(bundle_path)
+    bundle_dir = bundle_dir_from_input(bundle_path_obj)
+    normalized = refresh_bundle_state(deepcopy(bundle))
+    meta = normalized.get("dossier_seed", {}).get("meta", {})
+    progress = bundle_progress(normalized)
+    file_counts = bundle_file_counts(bundle_dir)
+    research_process = assemble_research_process(normalized)
+
+    return {
+        "generated_at": timestamp_iso(),
+        "bundle_path": str(bundle_path_obj),
+        "bundle_dir": str(bundle_dir),
+        "company_name": str(meta.get("company_name", "")).strip(),
+        "ticker": str(meta.get("ticker", "")).strip(),
+        "exchange": str(meta.get("exchange", "")).strip(),
+        "research_date": str(meta.get("research_date", "")).strip(),
+        "current_stage": progress["current_stage"],
+        "completion_percent": progress["completion_percent"],
+        "active_todo_count": progress["active_todo_count"],
+        "open_p0_count": progress["open_p0_count"],
+        "open_p1_count": progress["open_p1_count"],
+        "open_p2_count": progress["open_p2_count"],
+        "pending_search_count": progress["pending_search_count"],
+        "promoted_source_count": progress["promoted_source_count"],
+        "non_blocking_open_question_count": progress["non_blocking_open_question_count"],
+        "focus_parent_todo": progress["focus_parent_todo"],
+        "focus_question_todo": progress["focus_question_todo"],
+        "workflow_summary": research_process.get("workflow_summary", ""),
+        "completion_reason": research_process.get("completion_reason", ""),
+        "next_actions": list(research_process.get("next_actions", []))[:8],
+        "open_items": list(research_process.get("open_items", []))[:8],
+        "search_cycles": list(research_process.get("search_cycles", []))[-5:],
+        "review_cycles": list(research_process.get("review_cycles", []))[-5:],
+        "layer_counts": research_process.get("layer_counts", {}),
+        "file_counts": file_counts,
+        "resume_hint": (
+            "如果会话中断或 compact 失败，不要重做搜索；"
+            "先读取 CHECKPOINT-LATEST.md 与 bundle_status.py 输出，再按 next_actions 继续。"
+        ),
+    }
+
+
+def render_bundle_checkpoint_markdown(payload: dict[str, Any]) -> str:
+    lines = [
+        "# Research Bundle Checkpoint",
+        "",
+        f"- 生成时间: {payload.get('generated_at', '')}",
+        f"- 公司: {payload.get('company_name', '未知公司')} ({payload.get('ticker', 'N/A')})",
+        f"- 研究日期: {payload.get('research_date', '')}",
+        f"- bundle: {payload.get('bundle_path', '')}",
+        f"- 当前阶段: {payload.get('current_stage', '')}",
+        f"- 完成度: {payload.get('completion_percent', 0)}%",
+        f"- Active todo: {payload.get('active_todo_count', 0)}",
+        f"- Open P0/P1/P2: {payload.get('open_p0_count', 0)}/{payload.get('open_p1_count', 0)}/{payload.get('open_p2_count', 0)}",
+        f"- Pending searches: {payload.get('pending_search_count', 0)}",
+        f"- Promoted sources: {payload.get('promoted_source_count', 0)}",
+        f"- Non-blocking open questions: {payload.get('non_blocking_open_question_count', 0)}",
+        "",
+        "## 当前概况",
+        f"- {payload.get('workflow_summary', '')}",
+        f"- {payload.get('completion_reason', '')}",
+    ]
+
+    if payload.get("focus_parent_todo") or payload.get("focus_question_todo"):
+        lines.extend(["", "## 当前焦点"])
+        if payload.get("focus_parent_todo"):
+            lines.append(f"- 父级待办: {payload.get('focus_parent_todo', '')}")
+        if payload.get("focus_question_todo"):
+            lines.append(f"- 问题待办: {payload.get('focus_question_todo', '')}")
+
+    lines.extend(["", "## 下一步"])
+    next_actions = payload.get("next_actions", [])
+    if next_actions:
+        lines.extend(f"- {item}" for item in next_actions)
+    else:
+        lines.append("- 暂无明确下一步。")
+
+    lines.extend(["", "## 开放待办摘要"])
+    open_items = payload.get("open_items", [])
+    if open_items:
+        for item in open_items:
+            lines.append(
+                "- "
+                f"[{item.get('priority', 'P2')}] {item.get('title', '')} "
+                f"({item.get('module', '')} / {item.get('status', '')})"
+            )
+    else:
+        lines.append("- 当前没有未关闭待办。")
+
+    lines.extend(["", "## 最近搜索循环"])
+    search_cycles = payload.get("search_cycles", [])
+    if search_cycles:
+        for item in search_cycles:
+            lines.append(
+                "- "
+                f"{item.get('timestamp', '')} | {item.get('outcome', '')} | "
+                f"{item.get('query', '') or item.get('intent', '')}"
+            )
+            decision = str(item.get("decision", "")).strip()
+            if decision:
+                lines.append(f"  - 决策/摘要: {decision}")
+    else:
+        lines.append("- 尚无搜索循环。")
+
+    lines.extend(["", "## 最近复盘"])
+    review_cycles = payload.get("review_cycles", [])
+    if review_cycles:
+        for item in review_cycles:
+            lines.append(f"- {item.get('timestamp', '')} | {item.get('decision', '')}")
+            for action in _normalize_string_list(item.get("next_actions", []))[:3]:
+                lines.append(f"  - 下一步: {action}")
+    else:
+        lines.append("- 尚无复盘记录。")
+
+    lines.extend(
+        [
+            "",
+            "## 分层文件数",
+            f"- search/queries: {payload.get('file_counts', {}).get('search_queries', 0)}",
+            f"- search/results: {payload.get('file_counts', {}).get('search_results', 0)}",
+            f"- search/reviews: {payload.get('file_counts', {}).get('search_reviews', 0)}",
+            f"- raw: {payload.get('file_counts', {}).get('raw', 0)}",
+            f"- extracted: {payload.get('file_counts', {}).get('extracted', 0)}",
+            f"- working: {payload.get('file_counts', {}).get('working', 0)}",
+            f"- promoted: {payload.get('file_counts', {}).get('promoted', 0)}",
+            f"- artifacts: {payload.get('file_counts', {}).get('artifacts', 0)}",
+            "",
+            "## 续跑提示",
+            f"- {payload.get('resume_hint', '')}",
+            "",
+        ]
+    )
+    return "\n".join(lines).strip() + "\n"
+
+
+def write_bundle_checkpoint(
+    bundle: dict[str, Any],
+    bundle_path: str | Path,
+    *,
+    stage: str = "",
+    label: str = "checkpoint",
+    owner: str = "main-agent",
+) -> dict[str, str]:
+    bundle_path_obj = bundle_path_from_input(bundle_path)
+    bundle_dir = bundle_dir_from_input(bundle_path_obj)
+    stage_name = stage if stage in ALLOWED_TODO_STAGES else infer_checkpoint_stage(bundle)
+    checkpoint_id = unique_id("checkpoint")
+    payload = build_bundle_checkpoint(bundle, bundle_path_obj)
+    payload["checkpoint_id"] = checkpoint_id
+    payload["label"] = label
+    payload["stage"] = stage_name
+
+    rel_dir = Path("artifacts") / stage_name / "checkpoints"
+    rel_json = rel_dir / f"{checkpoint_id}.json"
+    rel_md = rel_dir / f"{checkpoint_id}.md"
+    abs_json = bundle_dir / rel_json
+    abs_md = bundle_dir / rel_md
+    abs_json.parent.mkdir(parents=True, exist_ok=True)
+    abs_md.parent.mkdir(parents=True, exist_ok=True)
+    abs_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    abs_md.write_text(render_bundle_checkpoint_markdown(payload), encoding="utf-8")
+
+    latest_json = bundle_dir / "CHECKPOINT-LATEST.json"
+    latest_md = bundle_dir / "CHECKPOINT-LATEST.md"
+    latest_json.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    latest_md.write_text(render_bundle_checkpoint_markdown(payload), encoding="utf-8")
+
+    append_artifact_record(
+        bundle,
+        owner=owner,
+        module="research-checkpoint",
+        path=rel_md.as_posix(),
+        kind="research-checkpoint",
+        title=f"研究断点检查点（{label}）",
+        note=f"stage={stage_name}; latest=CHECKPOINT-LATEST.md",
+        todo_ids=[],
+        layer="artifacts",
+        value_tier="useful",
+    )
+    return {
+        "checkpoint_id": checkpoint_id,
+        "stage": stage_name,
+        "markdown_path": str(abs_md),
+        "json_path": str(abs_json),
+        "latest_markdown": str(latest_md),
+        "latest_json": str(latest_json),
+    }
 
 
 def deep_merge(base: Any, patch: Any, path: tuple[str, ...] = ()) -> Any:
@@ -1315,6 +1705,7 @@ def merge_list_values(base: list[Any], patch: list[Any], path: tuple[str, ...]) 
         ("workflow", "todo_items"),
         ("workflow", "search_journal"),
         ("workflow", "review_cycles"),
+        ("workflow", "non_blocking_open_questions"),
         *(("research_assets", key) for key in RESEARCH_ASSET_KEYS),
     }
     if path in keyed_paths:
@@ -1543,27 +1934,57 @@ def _normalize_review_cycle(item: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _normalize_non_blocking_open_questions(value: Any, *, bundle: dict[str, Any] | None = None) -> list[dict[str, Any]]:
+    if not isinstance(value, list):
+        return []
+    normalized: list[dict[str, Any]] = []
+    seen_ids: set[str] = set()
+    for item in value:
+        if not isinstance(item, dict):
+            continue
+        question = _normalize_non_blocking_open_question(item, bundle=bundle)
+        question_id = str(question.get("id", "")).strip()
+        if not question_id or question_id in seen_ids:
+            continue
+        seen_ids.add(question_id)
+        normalized.append(question)
+    return normalized
+
+
+def _normalize_non_blocking_open_question(item: dict[str, Any], *, bundle: dict[str, Any] | None = None) -> dict[str, Any]:
+    from_todo_id = str(item.get("from_todo_id", "")).strip()
+    inferred_module = ""
+    inferred_priority = ""
+    if bundle is not None and from_todo_id:
+        workflow = bundle.get("workflow", {})
+        todo_items = workflow.get("todo_items", []) if isinstance(workflow, dict) else []
+        todo_index = {
+            str(todo.get("id", "")).strip(): todo
+            for todo in todo_items
+            if isinstance(todo, dict) and str(todo.get("id", "")).strip()
+        }
+        todo_item = todo_index.get(from_todo_id)
+        if isinstance(todo_item, dict):
+            inferred_module = str(todo_item.get("module", "")).strip()
+            inferred_priority = str(todo_item.get("priority", "")).strip()
+
+    priority = str(item.get("priority", inferred_priority or "P2")).strip() or inferred_priority or "P2"
+    return {
+        "id": str(item.get("id", "")).strip() or unique_id("openq"),
+        "text": str(item.get("text", "")).strip(),
+        "module": str(item.get("module", inferred_module)).strip(),
+        "from_todo_id": from_todo_id,
+        "priority": priority if priority in ALLOWED_TODO_PRIORITIES else "P2",
+        "reason_non_blocking": str(item.get("reason_non_blocking", "")).strip(),
+        "source_ids": _normalize_string_list(item.get("source_ids", [])),
+        "linked_review_id": str(item.get("linked_review_id", "")).strip(),
+        "last_reviewed_at": str(item.get("last_reviewed_at", "")).strip() or timestamp_iso(),
+    }
+
+
 def _normalize_completion_gates(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         value = {}
-
-    if any(key in value for key in ["required_modules", "minimum_source_buckets", "minimum_promoted_sources", "must_resolve_priorities"]):
-        legacy_required = _normalize_string_list(value.get("required_modules", DEFAULT_REQUIRED_MODULES)) or list(DEFAULT_REQUIRED_MODULES)
-        legacy_buckets = _normalize_string_list(value.get("minimum_source_buckets", DEFAULT_MINIMUM_SOURCE_BUCKETS)) or list(DEFAULT_MINIMUM_SOURCE_BUCKETS)
-        legacy_min_sources = int(value.get("minimum_promoted_sources", 100) or 100)
-        legacy_priorities = _normalize_string_list(value.get("must_resolve_priorities", ["P0"])) or ["P0"]
-        value = {
-            "research_started": {"minimum_queries": 1, "minimum_reviews": 1},
-            "foundation_ready": {"required_parent_todos": ["todo-foundation-primary-sources"], "minimum_useful_searches": 1},
-            "module_ready": {"required_modules": legacy_required, "must_resolve_priorities": legacy_priorities},
-            "report_ready": {
-                "required_modules": legacy_required,
-                "minimum_source_buckets": legacy_buckets,
-                "minimum_promoted_sources": legacy_min_sources,
-                "must_resolve_priorities": legacy_priorities,
-                "required_parent_todos": ["todo-dossier-assembly"],
-            },
-        }
 
     return {
         "research_started": {
@@ -1572,18 +1993,23 @@ def _normalize_completion_gates(value: Any) -> dict[str, Any]:
         },
         "foundation_ready": {
             "required_parent_todos": _normalize_string_list(value.get("foundation_ready", {}).get("required_parent_todos", ["todo-foundation-primary-sources"])) or ["todo-foundation-primary-sources"],
-            "minimum_useful_searches": int(value.get("foundation_ready", {}).get("minimum_useful_searches", 1) or 1),
+            "required_question_todos": _normalize_string_list(value.get("foundation_ready", {}).get("required_question_todos", DEFAULT_FOUNDATION_QUESTION_TODO_IDS)) or list(DEFAULT_FOUNDATION_QUESTION_TODO_IDS),
+            "minimum_useful_searches": int(value.get("foundation_ready", {}).get("minimum_useful_searches", 5) or 5),
         },
         "module_ready": {
             "required_modules": _normalize_string_list(value.get("module_ready", {}).get("required_modules", DEFAULT_REQUIRED_MODULES)) or list(DEFAULT_REQUIRED_MODULES),
             "must_resolve_priorities": _normalize_string_list(value.get("module_ready", {}).get("must_resolve_priorities", ["P0"])) or ["P0"],
+            "minimum_module_outputs": int(value.get("module_ready", {}).get("minimum_module_outputs", len(DEFAULT_REQUIRED_MODULES)) or len(DEFAULT_REQUIRED_MODULES)),
         },
         "report_ready": {
             "required_modules": _normalize_string_list(value.get("report_ready", {}).get("required_modules", DEFAULT_REQUIRED_MODULES)) or list(DEFAULT_REQUIRED_MODULES),
             "minimum_source_buckets": _normalize_string_list(value.get("report_ready", {}).get("minimum_source_buckets", DEFAULT_MINIMUM_SOURCE_BUCKETS)) or list(DEFAULT_MINIMUM_SOURCE_BUCKETS),
             "minimum_promoted_sources": int(value.get("report_ready", {}).get("minimum_promoted_sources", 100) or 100),
             "must_resolve_priorities": _normalize_string_list(value.get("report_ready", {}).get("must_resolve_priorities", ["P0"])) or ["P0"],
-            "required_parent_todos": _normalize_string_list(value.get("report_ready", {}).get("required_parent_todos", ["todo-dossier-assembly"])) or ["todo-dossier-assembly"],
+            "required_parent_todos": _normalize_string_list(value.get("report_ready", {}).get("required_parent_todos", DEFAULT_REPORT_REQUIRED_PARENT_TODOS)) or list(DEFAULT_REPORT_REQUIRED_PARENT_TODOS),
+            "require_no_active_todos": bool(value.get("report_ready", {}).get("require_no_active_todos", True)),
+            "require_non_blocking_open_questions": bool(value.get("report_ready", {}).get("require_non_blocking_open_questions", True)),
+            "required_validation_steps": _normalize_string_list(value.get("report_ready", {}).get("required_validation_steps", DEFAULT_REQUIRED_VALIDATION_STEPS)) or list(DEFAULT_REQUIRED_VALIDATION_STEPS),
         },
     }
 
@@ -1896,6 +2322,25 @@ def _validate_workflow(bundle: dict[str, Any], errors: list[str], warnings: list
             if not isinstance(item.get(key, []), list):
                 errors.append(f"workflow.review_cycles[{index}].{key} 必须是数组")
 
+    open_questions = workflow.get("non_blocking_open_questions")
+    if not isinstance(open_questions, list):
+        errors.append("workflow.non_blocking_open_questions 必须是数组")
+        open_questions = []
+    for index, item in enumerate(open_questions):
+        if not isinstance(item, dict):
+            errors.append(f"workflow.non_blocking_open_questions[{index}] 必须是对象")
+            continue
+        for key in ["id", "text", "module", "from_todo_id", "priority", "reason_non_blocking", "source_ids", "linked_review_id", "last_reviewed_at"]:
+            if key not in item:
+                errors.append(f"缺少字段: workflow.non_blocking_open_questions[{index}].{key}")
+        if item.get("priority") not in ALLOWED_TODO_PRIORITIES:
+            errors.append(f"workflow.non_blocking_open_questions[{index}].priority 非法")
+        if not isinstance(item.get("source_ids", []), list):
+            errors.append(f"workflow.non_blocking_open_questions[{index}].source_ids 必须是数组")
+        from_todo_id = str(item.get("from_todo_id", "")).strip()
+        if from_todo_id and from_todo_id not in todo_ids:
+            warnings.append(f"workflow.non_blocking_open_questions[{index}].from_todo_id 引用了未知 todo: {from_todo_id}")
+
     current_stage = str(workflow.get("current_stage", "")).strip()
     if current_stage and current_stage not in ALLOWED_STAGES:
         errors.append("workflow.current_stage 非法")
@@ -1904,6 +2349,9 @@ def _validate_workflow(bundle: dict[str, Any], errors: list[str], warnings: list
     if not isinstance(completion_gates, dict):
         errors.append("workflow.completion_gates 必须是对象")
     else:
+        legacy_keys = sorted(key for key in LEGACY_COMPLETION_GATE_KEYS if key in completion_gates)
+        if legacy_keys:
+            errors.append("workflow.completion_gates 使用了旧扁平字段：" + "、".join(legacy_keys))
         for gate in ["research_started", "foundation_ready", "module_ready", "report_ready"]:
             if gate not in completion_gates:
                 errors.append(f"缺少字段: workflow.completion_gates.{gate}")
@@ -1937,20 +2385,27 @@ def _build_workflow_summary(bundle: dict[str, Any]) -> dict[str, Any]:
             parent_counts[status] += 1
 
     useful_entries = [item for item in search_journal if str(item.get("outcome", "")).strip() in USEFUL_SEARCH_OUTCOMES]
+    pending_entries = [item for item in search_journal if str(item.get("outcome", "")).strip() == "pending"]
     last_useful = useful_entries[-1].get("timestamp", "") if useful_entries else ""
     open_p0 = len([item for item in todo_items if item.get("priority") == "P0" and item.get("status") not in {"done", "dropped"}])
     open_p1 = len([item for item in todo_items if item.get("priority") == "P1" and item.get("status") not in {"done", "dropped"}])
+    open_p2 = len([item for item in todo_items if item.get("priority") == "P2" and item.get("status") not in {"done", "dropped"}])
+    active_todos = _active_todos(todo_items)
     parent_total = len(parent_todos)
     parent_done = len([item for item in parent_todos if item.get("status") == "done"])
 
     focus_parent = _sort_open_todos(parent_todos)
     focus_question = _sort_open_todos(question_todos)
     promoted_sources = collect_promoted_sources(bundle)
+    completed_validation_steps = _completed_validation_steps(bundle)
+    foundation_ready_missing = _foundation_ready_failures(bundle)
+    module_ready_missing = _module_ready_failures(bundle)
+    report_ready_missing = _report_ready_failures(bundle)
     stage_flags = {
         "research_started": _is_research_started(bundle),
-        "foundation_ready": _is_foundation_ready(bundle),
-        "module_ready": _is_module_ready(bundle),
-        "report_ready": _is_report_ready(bundle),
+        "foundation_ready": len(foundation_ready_missing) == 0,
+        "module_ready": len(module_ready_missing) == 0,
+        "report_ready": len(report_ready_missing) == 0,
     }
 
     return {
@@ -1961,13 +2416,29 @@ def _build_workflow_summary(bundle: dict[str, Any]) -> dict[str, Any]:
         "question_todo_total": len(question_todos),
         "open_p0_count": open_p0,
         "open_p1_count": open_p1,
+        "open_p2_count": open_p2,
+        "active_todo_count": len(active_todos),
         "last_useful_search_at": str(last_useful).strip(),
         "query_count": len(research_assets.get("query_records", [])),
         "result_count": len(research_assets.get("result_records", [])),
         "review_count": len(review_cycles),
         "search_count": len(search_journal),
         "useful_search_count": len(useful_entries),
+        "pending_search_count": len(pending_entries),
         "promoted_source_count": len(promoted_sources),
+        "covered_source_buckets": sorted(
+            {
+                source_bucket_label(str(item.get("kind", "")).strip())
+                for item in promoted_sources
+                if isinstance(item, dict) and str(item.get("kind", "")).strip()
+            }
+        ),
+        "non_blocking_open_question_count": len(workflow.get("non_blocking_open_questions", [])),
+        "completed_validation_steps": sorted(completed_validation_steps),
+        "missing_validation_steps": [step for step in DEFAULT_REQUIRED_VALIDATION_STEPS if step not in completed_validation_steps],
+        "foundation_ready_missing": foundation_ready_missing,
+        "module_ready_missing": module_ready_missing,
+        "report_ready_missing": report_ready_missing,
         "current_stage": _determine_current_stage(bundle),
         "research_started": stage_flags["research_started"],
         "foundation_ready": stage_flags["foundation_ready"],
@@ -1981,14 +2452,56 @@ def _build_workflow_summary(bundle: dict[str, Any]) -> dict[str, Any]:
 def _build_next_actions(bundle: dict[str, Any]) -> list[str]:
     workflow = bundle.get("workflow", {})
     todo_items = [item for item in workflow.get("todo_items", []) if isinstance(item, dict)]
+    search_journal = [item for item in workflow.get("search_journal", []) if isinstance(item, dict)]
     question_todos = _sort_open_todos(_question_todos(todo_items))
     parent_todos = _sort_open_todos(_parent_todos(todo_items))
     actions: list[str] = []
+    pending_entries = [item for item in search_journal if str(item.get("outcome", "")).strip() == "pending"]
 
     if not bundle.get("research_assets", {}).get("query_records", []):
-        actions.append("先选择一个 P0 question todo，开始第一轮搜索，并使用 record_search_round.py 记录 query 与候选结果。")
+        actions.append(
+            "先选择一个 P0 question todo，先用 record_search_round.py --mode start 预落盘，再搜索，最后用 --mode complete 补齐结果。"
+        )
     if not workflow.get("review_cycles", []):
         actions.append("第一轮搜索后立刻运行 review_research_progress.py，记录复盘结论并更新 todo。")
+    if pending_entries:
+        latest_pending = pending_entries[-1]
+        pending_query = str(latest_pending.get("query", "")).strip() or "未命名查询"
+        actions.append(f"先补完尚未完成落盘的搜索：{pending_query}")
+        return merge_list_values([], actions, ("workflow", "next_actions"))
+
+    foundation_missing = _foundation_ready_failures(bundle)
+    module_missing = _module_ready_failures(bundle)
+    report_missing = _report_ready_failures(bundle)
+
+    if foundation_missing:
+        for item in question_todos:
+            if str(item.get("stage", "")).strip() == "foundation":
+                actions.append(
+                    f"[{item.get('priority', 'P1')}] 优先补 foundation 问题：{item.get('title', '')}（{item.get('module', '')}）"
+                )
+                if len(actions) >= 6:
+                    return merge_list_values([], actions, ("workflow", "next_actions"))
+        actions.extend(f"[foundation gate] {reason}" for reason in foundation_missing[:2])
+        return merge_list_values([], actions, ("workflow", "next_actions"))
+
+    if module_missing:
+        for item in question_todos:
+            if str(item.get("stage", "")).strip() == "module":
+                actions.append(
+                    f"[{item.get('priority', 'P1')}] 继续推进模块问题：{item.get('title', '')}（{item.get('module', '')}）"
+                )
+                if len(actions) >= 6:
+                    return merge_list_values([], actions, ("workflow", "next_actions"))
+        for item in parent_todos:
+            if str(item.get("stage", "")).strip() == "module":
+                actions.append(
+                    f"[{item.get('priority', 'P1')}] 收敛模块父级待办：{item.get('title', '')}（{item.get('module', '')}）"
+                )
+                if len(actions) >= 6:
+                    return merge_list_values([], actions, ("workflow", "next_actions"))
+        actions.extend(f"[module gate] {reason}" for reason in module_missing[:2])
+        return merge_list_values([], actions, ("workflow", "next_actions"))
 
     for item in question_todos[:3]:
         title = str(item.get("title", "")).strip()
@@ -2006,7 +2519,10 @@ def _build_next_actions(bundle: dict[str, Any]) -> list[str]:
                 actions.append(f"[{priority}] 继续推进父级待办：{title}（{module}）")
 
     if not actions:
-        actions.append("当前必需待办已基本完成，可进入 dossier 组装、校验与页面核验。")
+        if report_missing:
+            actions.extend(f"[report gate] {reason}" for reason in report_missing[:4])
+        else:
+            actions.append("当前 bundle 已满足公开源极限版完成门槛，可直接交付完整 dossier 与最终研究报告。")
     return merge_list_values([], actions, ("workflow", "next_actions"))
 
 
@@ -2056,71 +2572,15 @@ def _is_research_started(bundle: dict[str, Any]) -> bool:
 
 
 def _is_foundation_ready(bundle: dict[str, Any]) -> bool:
-    if not _is_research_started(bundle):
-        return False
-    workflow = bundle.get("workflow", {})
-    gates = workflow.get("completion_gates", {}).get("foundation_ready", {}) if isinstance(workflow, dict) else {}
-    required_parent_todos = set(_normalize_string_list(gates.get("required_parent_todos", [])))
-    useful_searches = len(
-        [item for item in workflow.get("search_journal", []) if isinstance(item, dict) and str(item.get("outcome", "")).strip() in USEFUL_SEARCH_OUTCOMES]
-    )
-    minimum_useful_searches = int(gates.get("minimum_useful_searches", 1) or 1)
-    done_parent_ids = {
-        str(item.get("id", "")).strip()
-        for item in _parent_todos([row for row in workflow.get("todo_items", []) if isinstance(row, dict)])
-        if item.get("status") == "done"
-    }
-    return required_parent_todos.issubset(done_parent_ids) and useful_searches >= minimum_useful_searches
+    return len(_foundation_ready_failures(bundle)) == 0
 
 
 def _is_module_ready(bundle: dict[str, Any]) -> bool:
-    workflow = bundle.get("workflow", {})
-    gates = workflow.get("completion_gates", {}).get("module_ready", {}) if isinstance(workflow, dict) else {}
-    required_modules = set(_normalize_string_list(gates.get("required_modules", DEFAULT_REQUIRED_MODULES)))
-    must_resolve_priorities = _normalize_string_list(gates.get("must_resolve_priorities", ["P0"])) or ["P0"]
-    parent_todos = _parent_todos([item for item in workflow.get("todo_items", []) if isinstance(item, dict)])
-    done_modules = {str(item.get("module", "")).strip() for item in parent_todos if item.get("status") == "done"}
-    if required_modules and not required_modules.issubset(done_modules):
-        return False
-    for priority in must_resolve_priorities:
-        unresolved = [item for item in workflow.get("todo_items", []) if isinstance(item, dict) and item.get("priority") == priority and item.get("status") not in {"done", "dropped"}]
-        if unresolved:
-            return False
-    return True
+    return len(_module_ready_failures(bundle)) == 0
 
 
 def _is_report_ready(bundle: dict[str, Any]) -> bool:
-    if not _is_module_ready(bundle):
-        return False
-    workflow = bundle.get("workflow", {})
-    gates = workflow.get("completion_gates", {}).get("report_ready", {}) if isinstance(workflow, dict) else {}
-    required_parent_todos = set(_normalize_string_list(gates.get("required_parent_todos", [])))
-    done_parent_ids = {
-        str(item.get("id", "")).strip()
-        for item in _parent_todos([row for row in workflow.get("todo_items", []) if isinstance(row, dict)])
-        if item.get("status") == "done"
-    }
-    if required_parent_todos and not required_parent_todos.issubset(done_parent_ids):
-        return False
-
-    promoted_sources = collect_promoted_sources(bundle)
-    if len(promoted_sources) < int(gates.get("minimum_promoted_sources", 0) or 0):
-        return False
-
-    covered_buckets = {source_bucket_label(str(item.get("kind", "")).strip()) for item in promoted_sources if isinstance(item, dict)}
-    minimum_buckets = set(_normalize_string_list(gates.get("minimum_source_buckets", [])))
-    if minimum_buckets and not minimum_buckets.issubset(covered_buckets):
-        return False
-
-    for priority in _normalize_string_list(gates.get("must_resolve_priorities", [])):
-        unresolved = [
-            item
-            for item in workflow.get("todo_items", [])
-            if isinstance(item, dict) and item.get("priority") == priority and item.get("status") not in {"done", "dropped"}
-        ]
-        if unresolved:
-            return False
-    return True
+    return len(_report_ready_failures(bundle)) == 0
 
 
 def _build_completion_reason(bundle: dict[str, Any]) -> str:
@@ -2128,18 +2588,244 @@ def _build_completion_reason(bundle: dict[str, Any]) -> str:
     summary = workflow.get("summary", {}) if isinstance(workflow, dict) else {}
     stage = workflow.get("current_stage", "initialized")
     if summary.get("report_ready"):
-        return "研究已完成分阶段门槛：父级模块完成、P0 待办清零、promoted 来源达到完整报告阈值，且组装/渲染待办已关闭。"
+        return "研究已达到公开源极限版完成门槛：P0 与 active todo 全部清零，尾部问题已转为非阻塞开放问题，来源覆盖、组装、校验与渲染均已完成。"
     if stage == "initialized":
         return "当前还停留在初始化阶段：请先记录至少一轮 query/result，并完成第一次 review。"
     if stage == "research_started":
-        return "研究已经启动，但 foundation gate 还未通过：请先补齐基础来源池，并关闭 research-foundation 父级待办。"
+        return "研究已经启动，但 foundation gate 还未通过：请先补齐一级来源池、关闭 foundation question todo，并持续复盘搜索方向。"
     if stage == "foundation_ready":
-        return "基础来源池已建立，但核心模块仍未完成，且仍存在 P0 待办未关闭。"
+        missing = _module_ready_failures(bundle)
+        return "基础来源池已建立，但核心模块还未收敛：" + ("；".join(missing[:3]) if missing else "仍需继续补模块输出与关键证据。")
     if stage == "module_ready":
-        promoted = summary.get("promoted_source_count", 0)
-        target = workflow.get("completion_gates", {}).get("report_ready", {}).get("minimum_promoted_sources", 100)
-        return f"核心模块已完成，但完整报告门槛尚未满足：当前 promoted sources 为 {promoted}，目标 {target}，且 final assembly 待办尚未完成。"
+        missing = _report_ready_failures(bundle)
+        return "核心模块已完成，但完整收尾门槛尚未满足：" + ("；".join(missing[:4]) if missing else "仍需完成最终收尾。")
     return "研究仍在推进，建议继续按 next_actions 搜索、落盘并复盘。"
+
+
+def _active_todos(todo_items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in todo_items if str(item.get("status", "")).strip() in {"todo", "in_progress", "blocked"}]
+
+
+def _validation_artifact_kinds(bundle: dict[str, Any]) -> set[str]:
+    kinds: set[str] = set()
+    for item in bundle.get("research_assets", {}).get("artifact_records", []):
+        if not isinstance(item, dict):
+            continue
+        kind = str(item.get("kind", "")).strip()
+        if kind:
+            kinds.add(kind)
+    return kinds
+
+
+def _completed_validation_steps(bundle: dict[str, Any]) -> set[str]:
+    artifact_kinds = _validation_artifact_kinds(bundle)
+    completed: set[str] = set()
+    for step, required_kinds in VALIDATION_STEP_REQUIREMENTS.items():
+        if required_kinds.issubset(artifact_kinds):
+            completed.add(step)
+    return completed
+
+
+def _foundation_ready_failures(bundle: dict[str, Any]) -> list[str]:
+    failures: list[str] = []
+    if not _is_research_started(bundle):
+        failures.append("research_started 未满足")
+        return failures
+
+    workflow = bundle.get("workflow", {})
+    gates = workflow.get("completion_gates", {}).get("foundation_ready", {}) if isinstance(workflow, dict) else {}
+    todo_items = [row for row in workflow.get("todo_items", []) if isinstance(row, dict)]
+    required_parent_todos = set(_normalize_string_list(gates.get("required_parent_todos", [])))
+    required_question_todos = set(_normalize_string_list(gates.get("required_question_todos", [])))
+    useful_searches = len(
+        [item for item in workflow.get("search_journal", []) if isinstance(item, dict) and str(item.get("outcome", "")).strip() in USEFUL_SEARCH_OUTCOMES]
+    )
+    minimum_useful_searches = int(gates.get("minimum_useful_searches", 5) or 5)
+    done_parent_ids = {
+        str(item.get("id", "")).strip()
+        for item in _parent_todos(todo_items)
+        if item.get("status") == "done"
+    }
+    closed_todo_ids = {
+        str(item.get("id", "")).strip()
+        for item in todo_items
+        if item.get("status") in {"done", "dropped"}
+    }
+    missing_parent_todos = sorted(required_parent_todos - done_parent_ids)
+    missing_question_todos = sorted(required_question_todos - closed_todo_ids)
+    if missing_parent_todos:
+        failures.append("foundation 父级待办未完成：" + "、".join(missing_parent_todos))
+    if missing_question_todos:
+        failures.append("foundation question todo 未关闭：" + "、".join(missing_question_todos))
+    if useful_searches < minimum_useful_searches:
+        failures.append(f"useful search 不足：当前 {useful_searches}，目标 {minimum_useful_searches}")
+    return failures
+
+
+def _module_ready_failures(bundle: dict[str, Any]) -> list[str]:
+    failures = _foundation_ready_failures(bundle)
+    if failures:
+        return failures
+
+    workflow = bundle.get("workflow", {})
+    gates = workflow.get("completion_gates", {}).get("module_ready", {}) if isinstance(workflow, dict) else {}
+    required_modules = set(_normalize_string_list(gates.get("required_modules", DEFAULT_REQUIRED_MODULES)))
+    must_resolve_priorities = _normalize_string_list(gates.get("must_resolve_priorities", ["P0"])) or ["P0"]
+    minimum_module_outputs = int(gates.get("minimum_module_outputs", len(required_modules)) or len(required_modules))
+    todo_items = [item for item in workflow.get("todo_items", []) if isinstance(item, dict)]
+    parent_todos = _parent_todos(todo_items)
+    done_modules = {str(item.get("module", "")).strip() for item in parent_todos if item.get("status") == "done"}
+    module_output_sections = {
+        str(item.get("section", "")).strip()
+        for item in bundle.get("module_outputs", [])
+        if isinstance(item, dict) and str(item.get("section", "")).strip()
+    }
+
+    missing_done_modules = sorted(required_modules - done_modules)
+    missing_output_modules = sorted(required_modules - module_output_sections)
+    if missing_done_modules:
+        failures.append("required modules 父级待办未完成：" + "、".join(missing_done_modules))
+    if missing_output_modules:
+        failures.append("缺少模块输出：" + "、".join(missing_output_modules))
+    if len(module_output_sections) < minimum_module_outputs:
+        failures.append(f"模块输出不足：当前 {len(module_output_sections)}，目标 {minimum_module_outputs}")
+    for priority in must_resolve_priorities:
+        unresolved = [
+            item
+            for item in todo_items
+            if item.get("priority") == priority and item.get("status") not in {"done", "dropped"}
+        ]
+        if unresolved:
+            failures.append(f"{priority} 待办未清零：{len(unresolved)} 项")
+    return failures
+
+
+def _report_ready_failures(bundle: dict[str, Any]) -> list[str]:
+    failures = _module_ready_failures(bundle)
+    if failures:
+        return failures
+
+    workflow = bundle.get("workflow", {})
+    gates = workflow.get("completion_gates", {}).get("report_ready", {}) if isinstance(workflow, dict) else {}
+    todo_items = [row for row in workflow.get("todo_items", []) if isinstance(row, dict)]
+    question_todos = _question_todos(todo_items)
+    required_parent_todos = set(_normalize_string_list(gates.get("required_parent_todos", [])))
+    done_parent_ids = {
+        str(item.get("id", "")).strip()
+        for item in _parent_todos(todo_items)
+        if item.get("status") == "done"
+    }
+    missing_parent_todos = sorted(required_parent_todos - done_parent_ids)
+    if missing_parent_todos:
+        failures.append("收尾父级待办未完成：" + "、".join(missing_parent_todos))
+
+    promoted_sources = collect_promoted_sources(bundle)
+    minimum_promoted_sources = int(gates.get("minimum_promoted_sources", 0) or 0)
+    if len(promoted_sources) < minimum_promoted_sources:
+        failures.append(f"promoted sources 不足：当前 {len(promoted_sources)}，目标 {minimum_promoted_sources}")
+
+    covered_buckets = {source_bucket_label(str(item.get("kind", "")).strip()) for item in promoted_sources if isinstance(item, dict)}
+    minimum_buckets = set(_normalize_string_list(gates.get("minimum_source_buckets", [])))
+    missing_buckets = sorted(minimum_buckets - covered_buckets)
+    if missing_buckets:
+        failures.append("来源 bucket 未覆盖：" + "、".join(missing_buckets))
+
+    for priority in _normalize_string_list(gates.get("must_resolve_priorities", [])):
+        unresolved = [
+            item
+            for item in todo_items
+            if item.get("priority") == priority and item.get("status") not in {"done", "dropped"}
+        ]
+        if unresolved:
+            failures.append(f"{priority} 待办未清零：{len(unresolved)} 项")
+
+    if bool(gates.get("require_no_active_todos", True)):
+        active_todos = _active_todos(todo_items)
+        if active_todos:
+            failures.append(f"仍有 active todo：{len(active_todos)} 项")
+
+    if bool(gates.get("require_non_blocking_open_questions", True)):
+        open_question_todo_ids = {
+            str(item.get("from_todo_id", "")).strip()
+            for item in workflow.get("non_blocking_open_questions", [])
+            if isinstance(item, dict) and str(item.get("from_todo_id", "")).strip()
+        }
+        missing_open_question_links = [
+            str(item.get("id", "")).strip()
+            for item in question_todos
+            if item.get("priority") in {"P1", "P2"}
+            and item.get("status") == "dropped"
+            and str(item.get("id", "")).strip()
+            and str(item.get("id", "")).strip() not in open_question_todo_ids
+        ]
+        if missing_open_question_links:
+            failures.append("存在未转开放问题的已 dropped P1/P2 question todo：" + "、".join(missing_open_question_links[:6]))
+
+    completed_validation_steps = _completed_validation_steps(bundle)
+    required_validation_steps = _normalize_string_list(gates.get("required_validation_steps", DEFAULT_REQUIRED_VALIDATION_STEPS))
+    missing_validation_steps = [step for step in required_validation_steps if step not in completed_validation_steps]
+    if missing_validation_steps:
+        failures.append("缺少校验/交付证据：" + "、".join(missing_validation_steps))
+
+    return failures
+
+
+def _merge_open_question_items(base: list[Any], patch: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+    seen_keys: set[str] = set()
+    for raw in list(base or []) + list(patch or []):
+        if not isinstance(raw, dict):
+            continue
+        key = str(raw.get("id", "")).strip() or str(raw.get("text", "")).strip()
+        if not key or key in seen_keys:
+            continue
+        seen_keys.add(key)
+        normalized.append(raw)
+    return normalized
+
+
+def _build_dossier_open_question_items(
+    bundle: dict[str, Any],
+    *,
+    all_gaps: list[str],
+    all_conflicts: list[str],
+) -> list[dict[str, Any]]:
+    workflow = bundle.get("workflow", {})
+    open_questions = [
+        _normalize_non_blocking_open_question(item, bundle=bundle)
+        for item in workflow.get("non_blocking_open_questions", [])
+        if isinstance(item, dict) and str(item.get("text", "")).strip()
+    ]
+    derived_items: list[dict[str, Any]] = list(open_questions)
+    for index, text in enumerate([item for item in all_gaps if str(item).strip()], start=1):
+        derived_items.append(
+            {
+                "id": f"module-gap-{index}",
+                "text": str(text).strip(),
+                "module": "",
+                "from_todo_id": "",
+                "priority": "P2",
+                "reason_non_blocking": "模块综合后识别出的后续跟踪问题",
+                "source_ids": [],
+                "linked_review_id": "",
+                "last_reviewed_at": timestamp_iso(),
+            }
+        )
+    for index, text in enumerate([item for item in all_conflicts if str(item).strip()], start=1):
+        derived_items.append(
+            {
+                "id": f"module-conflict-{index}",
+                "text": f"待核冲突：{str(text).strip()}",
+                "module": "",
+                "from_todo_id": "",
+                "priority": "P1",
+                "reason_non_blocking": "仍有冲突信息需在后续公开材料中继续验证",
+                "source_ids": [],
+                "linked_review_id": "",
+                "last_reviewed_at": timestamp_iso(),
+            }
+        )
+    return _merge_open_question_items([], derived_items)
 
 
 def _validate_single_module_output(module_output: dict[str, Any]) -> None:

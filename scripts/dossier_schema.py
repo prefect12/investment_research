@@ -5,12 +5,13 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 REQUIRED_TOP_LEVEL = [
     "meta",
+    "report_brief",
+    "report_method",
     "current_status",
     "summary",
     "investment_case",
@@ -24,6 +25,7 @@ REQUIRED_TOP_LEVEL = [
     "market_behavior",
     "crisis_archive",
     "debate",
+    "investor_lenses",
     "research_process",
     "open_questions",
     "sources",
@@ -41,6 +43,8 @@ def load_dossier(path: str | Path) -> dict[str, Any]:
         data = json.load(handle)
     if not isinstance(data, dict):
         raise ValueError("dossier 顶层必须是 JSON 对象")
+    if "investor_master_views" in data:
+        raise ValueError("检测到旧字段 investor_master_views；当前只支持 investor_lenses，请重新生成新 dossier。")
     return data
 
 
@@ -57,20 +61,6 @@ def dossier_slug(data: dict[str, Any]) -> str:
     return slugify(joined or "company-dossier")
 
 
-def timestamp_slug() -> str:
-    return datetime.now().strftime("%Y%m%dT%H%M%S")
-
-
-def default_output_dir(
-    data: dict[str, Any],
-    base_dir: str | Path,
-    output_dir: str | Path | None = None,
-) -> Path:
-    if output_dir:
-        return Path(output_dir).expanduser()
-    return Path(base_dir).expanduser() / dossier_slug(data)
-
-
 def validate_dossier(data: dict[str, Any]) -> tuple[list[str], list[str]]:
     errors: list[str] = []
     warnings: list[str] = []
@@ -82,9 +72,12 @@ def validate_dossier(data: dict[str, Any]) -> tuple[list[str], list[str]]:
     if errors:
         return errors, warnings
 
+    if "investor_master_views" in data:
+        errors.append("检测到旧字段 investor_master_views；当前 schema 只接受 investor_lenses")
+
     meta = _require_dict(data, "meta", errors)
-    report_brief = data.get("report_brief")
-    report_method = data.get("report_method")
+    report_brief = _require_dict(data, "report_brief", errors)
+    report_method = _require_dict(data, "report_method", errors)
     current_status = _require_dict(data, "current_status", errors)
     summary = _require_dict(data, "summary", errors)
     investment_case = _require_dict(data, "investment_case", errors)
@@ -103,25 +96,18 @@ def validate_dossier(data: dict[str, Any]) -> tuple[list[str], list[str]]:
     sources = _require_dict(data, "sources", errors)
 
     _require_keys(meta, ["company_name", "ticker", "research_date", "conclusion", "thesis"], "meta", errors)
-    if isinstance(report_brief, dict):
-        _require_keys(
-            report_brief,
-            ["what_company_is", "current_action", "why_now", "core_bet", "market_is_pricing", "main_error_risk", "payoff_sources", "next_checks"],
-            "report_brief",
-            errors,
-        )
-    else:
-        warnings.append("缺少顶层字段: report_brief，将在渲染时使用兼容默认值。")
-
-    if isinstance(report_method, dict):
-        _require_keys(
-            report_method,
-            ["scope_statement", "information_collected", "research_modules", "decision_steps", "limitations"],
-            "report_method",
-            errors,
-        )
-    else:
-        warnings.append("缺少顶层字段: report_method，将在渲染时使用兼容默认值。")
+    _require_keys(
+        report_brief,
+        ["what_company_is", "current_action", "why_now", "core_bet", "market_is_pricing", "main_error_risk", "payoff_sources", "next_checks"],
+        "report_brief",
+        errors,
+    )
+    _require_keys(
+        report_method,
+        ["scope_statement", "information_collected", "research_modules", "decision_steps", "limitations"],
+        "report_method",
+        errors,
+    )
     _require_keys(
         current_status,
         ["as_of", "status_summary", "valuation_summary", "price_action_summary", "snapshot_metrics", "price_levels"],
@@ -180,14 +166,12 @@ def validate_dossier(data: dict[str, Any]) -> tuple[list[str], list[str]]:
     _require_list(summary, "support_points", errors)
     _require_list(summary, "risk_points", errors)
     _require_list(summary, "open_questions", errors)
-    if isinstance(report_brief, dict):
-        _require_list(report_brief, "payoff_sources", errors)
-        _require_list(report_brief, "next_checks", errors)
-    if isinstance(report_method, dict):
-        _require_list(report_method, "information_collected", errors)
-        _require_list(report_method, "research_modules", errors)
-        _require_list(report_method, "decision_steps", errors)
-        _require_list(report_method, "limitations", errors)
+    _require_list(report_brief, "payoff_sources", errors)
+    _require_list(report_brief, "next_checks", errors)
+    _require_list(report_method, "information_collected", errors)
+    _require_list(report_method, "research_modules", errors)
+    _require_list(report_method, "decision_steps", errors)
+    _require_list(report_method, "limitations", errors)
     _require_list(current_status, "snapshot_metrics", errors)
     _require_list(current_status, "price_levels", errors)
     _require_list(investment_case, "falsifiers", errors)
@@ -271,10 +255,7 @@ def validate_dossier(data: dict[str, Any]) -> tuple[list[str], list[str]]:
 def _validate_investor_lenses(data: dict[str, Any], errors: list[str], warnings: list[str]) -> None:
     section = data.get("investor_lenses")
     if section is None:
-        if isinstance(data.get("investor_master_views"), dict):
-            warnings.append("检测到旧字段 investor_master_views，建议迁移到 investor_lenses。")
-        else:
-            warnings.append("缺少顶层字段: investor_lenses，将在渲染时使用兼容默认值。")
+        errors.append("缺少顶层字段: investor_lenses")
         return
 
     if not isinstance(section, dict):

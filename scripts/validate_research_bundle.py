@@ -8,6 +8,7 @@ import sys
 from pathlib import Path
 
 from bundle_schema import (
+    append_artifact_record,
     bundle_dir_from_input,
     bundle_file_counts,
     bundle_has_active_todo,
@@ -15,6 +16,7 @@ from bundle_schema import (
     bundle_path_from_input,
     bundle_progress,
     load_bundle,
+    save_bundle,
     validate_bundle,
 )
 
@@ -52,6 +54,20 @@ def main() -> int:
             print(f"- {error}")
         return 1
 
+    append_artifact_record(
+        bundle,
+        owner="system-validator",
+        module="final-assembly",
+        path=str(bundle_path),
+        kind="validation-bundle",
+        title="Research Bundle 校验通过",
+        note="validate_research_bundle.py 校验通过",
+        todo_ids=["todo-dossier-assembly"],
+        layer="artifacts",
+        value_tier="useful",
+    )
+    save_bundle(bundle, bundle_path)
+
     progress = bundle_progress(bundle)
     file_counts = bundle_file_counts(bundle_dir)
     print("\n[校验通过]")
@@ -72,10 +88,16 @@ def main() -> int:
     print(f"- todo 已完成: {progress['todo_done']}")
     print(f"- todo 进行中: {progress['todo_in_progress']}")
     print(f"- todo 阻塞: {progress['todo_blocked']}")
+    print(f"- active_todo_count: {progress['active_todo_count']}")
     print(f"- open_p0_count: {progress['open_p0_count']}")
     print(f"- open_p1_count: {progress['open_p1_count']}")
+    print(f"- open_p2_count: {progress['open_p2_count']}")
     print(f"- completion_percent: {progress['completion_percent']}%")
+    print(f"- pending_search_count: {progress['pending_search_count']}")
     print(f"- promoted_source_count: {progress['promoted_source_count']}")
+    print(f"- non_blocking_open_question_count: {progress['non_blocking_open_question_count']}")
+    print(f"- completed_validation_steps: {', '.join(progress['completed_validation_steps']) or '无'}")
+    print(f"- missing_validation_steps: {', '.join(progress['missing_validation_steps']) or '无'}")
     print(f"- search/queries 文件数: {file_counts['search_queries']}")
     print(f"- search/results 文件数: {file_counts['search_results']}")
     print(f"- search/reviews 文件数: {file_counts['search_reviews']}")
@@ -84,6 +106,19 @@ def main() -> int:
     print(f"- working 文件数: {file_counts['working']}")
     print(f"- promoted 文件数: {file_counts['promoted']}")
     print(f"- artifacts 文件数: {file_counts['artifacts']}")
+    if progress["foundation_ready_missing"] or progress["module_ready_missing"] or progress["report_ready_missing"]:
+        if progress["foundation_ready_missing"]:
+            print("- foundation_ready_missing:")
+            for item in progress["foundation_ready_missing"][:6]:
+                print(f"  - {item}")
+        if progress["module_ready_missing"]:
+            print("- module_ready_missing:")
+            for item in progress["module_ready_missing"][:6]:
+                print(f"  - {item}")
+        if progress["report_ready_missing"]:
+            print("- report_ready_missing:")
+            for item in progress["report_ready_missing"][:8]:
+                print(f"  - {item}")
 
     if not bundle_has_progress(bundle):
         print("- 状态: 仍是空 bundle；只是完成了初始化，还没有真正记录 query/result/review 或研究资产。")

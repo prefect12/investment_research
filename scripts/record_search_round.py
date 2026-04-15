@@ -31,18 +31,26 @@ STAGE_ORDER = ["foundation", "module", "gap_close", "assembly"]
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="记录一次搜索 query、候选结果与搜索日志。")
     parser.add_argument("--bundle", required=True, help="bundle.json 路径，或 bundle 所在目录")
+    parser.add_argument(
+        "--mode",
+        choices=["start", "complete"],
+        default="complete",
+        help="start=搜索前先预落盘，complete=搜索后补齐结果；默认 complete",
+    )
     parser.add_argument("--owner", default="main-agent", help="执行搜索的 agent")
     parser.add_argument("--module", default="", help="当前搜索所属模块")
     parser.add_argument("--todo-id", action="append", default=[], help="关联的 todo id，可重复传入")
     parser.add_argument("--stage", choices=sorted(ALLOWED_TODO_STAGES), help="强制指定研究阶段；默认从 todo 推断")
-    parser.add_argument("--query", required=True, help="搜索 query")
+    parser.add_argument("--query-id", default="", help="已有 query id；用于把 start 和 complete 串起来")
+    parser.add_argument("--search-id", default="", help="已有 search id；用于更新同一轮搜索日志")
+    parser.add_argument("--query", default="", help="搜索 query；补完已有搜索时可省略并从已有记录继承")
     parser.add_argument("--reason", default="", help="为什么做这次搜索")
     parser.add_argument("--based-on", default="", help="这次搜索基于哪些已有材料、缺口或 review 决策")
     parser.add_argument(
         "--outcome",
-        choices=["no_hit", "duplicate", "lead", "evidence", "counterevidence"],
-        default="lead",
-        help="本轮搜索暂时得到的 outcome",
+        choices=["pending", "no_hit", "duplicate", "lead", "evidence", "counterevidence"],
+        default="",
+        help="本轮搜索 outcome；start 默认 pending，complete 默认 lead",
     )
     parser.add_argument("--result-json", action="append", default=[], help="候选结果 JSON 文件；可为单对象或对象数组")
     parser.add_argument("--result-url", action="append", default=[], help="单条候选结果 URL，可重复传入")
@@ -74,6 +82,10 @@ def load_json_records(path_str: str) -> list[dict[str, Any]]:
 
 def normalize_todo_ids(values: list[str]) -> list[str]:
     return [str(item).strip() for item in values if str(item).strip()]
+
+
+def unique_preserving_order(values: list[str]) -> list[str]:
+    return list(dict.fromkeys(str(item).strip() for item in values if str(item).strip()))
 
 
 def infer_stage(bundle: dict[str, Any], explicit_stage: str, todo_ids: list[str], module: str) -> str:
@@ -143,6 +155,83 @@ def load_results(args: argparse.Namespace) -> list[dict[str, Any]]:
     return results
 
 
+def find_query_record(bundle: dict[str, Any], query_id: str) -> dict[str, Any] | None:
+    query_id = str(query_id).strip()
+    if not query_id:
+        return None
+    assets = bundle.get("research_assets", {})
+    records = assets.get("query_records", []) if isinstance(assets, dict) else []
+    for item in records:
+        if isinstance(item, dict) and str(item.get("id", "")).strip() == query_id:
+            return item
+    return None
+
+
+def find_search_entry(bundle: dict[str, Any], *, search_id: str = "", query_id: str = "") -> dict[str, Any] | None:
+    workflow = bundle.get("workflow", {})
+    journal = workflow.get("search_journal", []) if isinstance(workflow, dict) else []
+    for item in journal:
+        if not isinstance(item, dict):
+            continue
+        if search_id and str(item.get("id", "")).strip() == search_id:
+            return item
+        if query_id and str(item.get("query_id", "")).strip() == query_id:
+            return item
+    return None
+
+
+def inherited_value(*values: Any) -> str:
+    for value in values:
+        text = str(value or "").strip()
+        if text:
+            return text
+    return ""
+
+
+def resolve_todo_ids(
+    explicit_todo_ids: list[str],
+    existing_query: dict[str, Any] | None,
+    existing_search: dict[str, Any] | None,
+) -> list[str]:
+    if explicit_todo_ids:
+        return unique_preserving_order(explicit_todo_ids)
+    inherited = [
+        str((existing_query or {}).get("todo_id", "")).strip(),
+        str((existing_search or {}).get("todo_id", "")).strip(),
+    ]
+    return unique_preserving_order([item for item in inherited if item])
+
+
+def resolve_outcome(args: argparse.Namespace, existing_search: dict[str, Any] | None) -> str:
+    explicit = str(args.outcome or "").strip()
+    if explicit:
+        return explicit
+    if args.mode == "start":
+        return "pending"
+    inherited = str((existing_search or {}).get("outcome", "")).strip()
+    if inherited and inherited != "pending":
+        return inherited
+    return "lead"
+
+
+def reset_query_records(bundle: dict[str, Any], query_id: str) -> None:
+    assets = bundle.setdefault("research_assets", {})
+    query_records = assets.get("query_records", []) if isinstance(assets, dict) else []
+    result_records = assets.get("result_records", []) if isinstance(assets, dict) else []
+    if isinstance(query_records, list):
+        assets["query_records"] = [
+            item
+            for item in query_records
+            if not (isinstance(item, dict) and str(item.get("id", "")).strip() == query_id)
+        ]
+    if isinstance(result_records, list):
+        assets["result_records"] = [
+            item
+            for item in result_records
+            if not (isinstance(item, dict) and str(item.get("query_id", "")).strip() == query_id)
+        ]
+
+
 def annotate_results(
     results: list[dict[str, Any]],
     *,
@@ -210,6 +299,22 @@ def save_snapshots(
     return query_relpath, result_relpath
 
 
+def count_unreviewed_search_tail(bundle: dict[str, Any]) -> int:
+    workflow = bundle.get("workflow", {})
+    if not isinstance(workflow, dict):
+        return 0
+    count = 0
+    for item in reversed(workflow.get("search_journal", [])):
+        if not isinstance(item, dict):
+            continue
+        if str(item.get("review_id", "")).strip():
+            break
+        if str(item.get("outcome", "")).strip() == "pending":
+            continue
+        count += 1
+    return count
+
+
 def main() -> int:
     args = parse_args()
     bundle_path = bundle_path_from_input(Path(args.bundle).expanduser())
@@ -217,19 +322,34 @@ def main() -> int:
 
     try:
         bundle = load_bundle(bundle_path)
-        todo_ids = normalize_todo_ids(args.todo_id)
-        stage = infer_stage(bundle, args.stage or "", todo_ids, args.module)
-        raw_results = load_results(args)
-        query_id = unique_id("query")
+        explicit_query_id = str(args.query_id or "").strip()
+        explicit_search_id = str(args.search_id or "").strip()
+        existing_search = find_search_entry(bundle, search_id=explicit_search_id, query_id=explicit_query_id)
+        inherited_query_id = explicit_query_id or str((existing_search or {}).get("query_id", "")).strip()
+        existing_query = find_query_record(bundle, inherited_query_id)
+        query_id = inherited_query_id or str((existing_query or {}).get("id", "")).strip() or unique_id("query")
+        search_id_hint = explicit_search_id or str((existing_search or {}).get("id", "")).strip()
+        todo_ids = resolve_todo_ids(normalize_todo_ids(args.todo_id), existing_query, existing_search)
+        module = inherited_value(args.module, (existing_query or {}).get("module"), (existing_search or {}).get("module"))
+        stage = infer_stage(bundle, args.stage or "", todo_ids, module)
+        query_text = inherited_value(args.query, (existing_query or {}).get("query"), (existing_search or {}).get("query"))
+        if not query_text:
+            raise ValueError("缺少 --query，且无法从 query_id/search_id 继承已有 query")
+        reason = inherited_value(args.reason, (existing_query or {}).get("reason"), (existing_search or {}).get("reason"))
+        based_on = inherited_value(args.based_on, (existing_query or {}).get("based_on"), (existing_search or {}).get("based_on"))
+        outcome = resolve_outcome(args, existing_search)
+        raw_results = [] if args.mode == "start" else load_results(args)
+        start_timestamp = inherited_value((existing_query or {}).get("timestamp"), (existing_search or {}).get("timestamp"))
         provisional_query_record = {
             "id": query_id,
-            "module": args.module,
+            "timestamp": start_timestamp,
+            "module": module,
             "todo_id": todo_ids[0] if todo_ids else "",
-            "query": args.query,
-            "reason": args.reason,
-            "based_on": args.based_on,
+            "query": query_text,
+            "reason": reason,
+            "based_on": based_on,
             "executor": args.owner,
-            "outcome": args.outcome,
+            "outcome": outcome,
         }
         provisional_result_relpath = (SEARCH_RESULT_SUBDIR / stage / f"{query_id}.json").as_posix()
         result_records = annotate_results(
@@ -237,7 +357,7 @@ def main() -> int:
             query_id=query_id,
             stage=stage,
             owner=args.owner,
-            module=args.module,
+            module=module,
             todo_ids=todo_ids,
             results_snapshot_relpath=provisional_result_relpath,
         )
@@ -252,53 +372,77 @@ def main() -> int:
             result_records=result_records,
             todo_ids=todo_ids,
             owner=args.owner,
-            module=args.module,
+            module=module,
         )
         result_ids = [str(item.get("id", "")).strip() for item in result_records if str(item.get("id", "")).strip()]
-        captured_urls = [str(item).strip() for item in args.captured_url if str(item).strip()]
-        captured_urls.extend(
-            str(item.get("url", "")).strip()
-            for item in result_records
-            if isinstance(item, dict) and str(item.get("url", "")).strip()
+        captured_urls = unique_preserving_order(
+            [
+                *[str(value).strip() for value in (existing_search or {}).get("captured_urls", []) if str(value).strip()],
+                *[str(item).strip() for item in args.captured_url if str(item).strip()],
+                *[
+                    str(item.get("url", "")).strip()
+                    for item in result_records
+                    if isinstance(item, dict) and str(item.get("url", "")).strip()
+                ],
+            ]
         )
-        captured_urls = list(dict.fromkeys(captured_urls))
+        next_actions = unique_preserving_order(
+            [
+                *[str(value).strip() for value in (existing_search or {}).get("next_actions", []) if str(value).strip()],
+                *[str(item).strip() for item in args.next_action if str(item).strip()],
+            ]
+        )
+        result_summary = inherited_value(args.result_summary, (existing_search or {}).get("summary"))
 
+        reset_query_records(bundle, query_id)
         append_research_assets(bundle, query_records=[query_record], result_records=result_records)
         search_entry = append_search_journal_entry(
             bundle,
             {
-                "module": args.module,
+                "id": search_id_hint,
+                "timestamp": start_timestamp,
+                "module": module,
                 "todo_id": todo_ids[0] if todo_ids else "",
-                "query": args.query,
-                "reason": args.reason,
-                "based_on": args.based_on,
-                "outcome": args.outcome,
+                "query": query_text,
+                "reason": reason,
+                "based_on": based_on,
+                "outcome": outcome,
                 "captured_urls": captured_urls,
                 "saved_paths": [query_record["saved_path"], result_relpath],
-                "summary": args.result_summary,
-                "next_actions": args.next_action,
+                "summary": result_summary,
+                "next_actions": next_actions,
                 "query_id": query_id,
                 "result_ids": result_ids,
             },
         )
         search_id = str(search_entry.get("id", "")).strip()
+        link_kwargs = {
+            "todo_id": "",
+            "query_ids": [query_id],
+            "result_ids": result_ids,
+            "search_id": search_id,
+            "note": result_summary,
+            "promote_to_in_progress": True,
+        }
+        if args.mode == "start":
+            link_kwargs["result_ids"] = []
+            if not result_summary:
+                link_kwargs["note"] = ""
+
         for todo_id in todo_ids:
             link_research_to_todo(
                 bundle,
-                todo_id=todo_id,
-                query_ids=[query_id],
-                result_ids=result_ids,
-                search_id=search_id,
-                note=args.result_summary,
-                promote_to_in_progress=True,
+                **{**link_kwargs, "todo_id": todo_id},
             )
         save_bundle(bundle, bundle_path)
         progress = bundle_progress(bundle)
+        unreviewed_tail = count_unreviewed_search_tail(bundle)
     except Exception as exc:  # noqa: BLE001
         print(f"[错误] 无法记录搜索轮次: {exc}")
         return 1
 
     print(f"[完成] bundle: {bundle_path}")
+    print(f"[模式] {args.mode}")
     print(f"[查询] {query_id} -> {query_record['saved_path']}")
     print(f"[结果] {len(result_records)} 条 -> {result_relpath}")
     if search_id:
@@ -309,6 +453,13 @@ def main() -> int:
         f"[累计] stage={progress['current_stage']} queries={progress['query_records']} results={progress['result_records']} "
         f"searches={progress['search_journal']} reviews={progress['review_cycles']}"
     )
+    if args.mode == "start":
+        print("提示：这次搜索已经先落盘；拿到结果后请立刻用同一个 --query-id/--search-id 执行 --mode complete。")
+    if unreviewed_tail >= 3:
+        print(
+            f"[警告] 已连续记录 {unreviewed_tail} 轮未复盘搜索；"
+            "建议立即运行 review_research_progress.py，并写入 checkpoint，避免上下文持续膨胀导致卡住。"
+        )
     return 0
 
 

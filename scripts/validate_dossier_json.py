@@ -7,6 +7,7 @@ import argparse
 import sys
 from pathlib import Path
 
+from bundle_schema import append_artifact_record, load_bundle, save_bundle
 from dossier_schema import load_dossier, validate_dossier
 
 
@@ -59,6 +60,27 @@ def main() -> int:
     print(f"- 预判复盘数: {len(management.get('predictions', []))}")
     print(f"- 投资大师视角数: {len(investor_lenses.get('views', []))}")
     print(f"- 来源数: {len(sources.get('items', []))}")
+
+    bundle_path = input_path.parent / "bundle.json"
+    if bundle_path.exists():
+        try:
+            bundle = load_bundle(bundle_path)
+            append_artifact_record(
+                bundle,
+                owner="system-validator",
+                module="final-assembly",
+                path=str(input_path),
+                kind="validation-dossier",
+                title="Dossier JSON 校验通过",
+                note="validate_dossier_json.py 校验通过",
+                todo_ids=["todo-dossier-assembly"],
+                layer="artifacts",
+                value_tier="used_in_dossier",
+            )
+            save_bundle(bundle, bundle_path)
+            print(f"- bundle 已记录 dossier 校验结果: {bundle_path}")
+        except Exception as exc:  # noqa: BLE001
+            print(f"- 警告: 无法回写 bundle 校验记录: {exc}")
     return 0
 
 

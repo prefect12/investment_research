@@ -1,0 +1,146 @@
+def build_sample_dossier() -> dict:
+    source_kinds = [
+        'annual-report',
+        'sec-filing',
+        'earnings-call-transcript',
+        'investor-presentation',
+        'management-interview',
+        'market-data',
+    ]
+    sources = []
+    for index in range(100):
+        kind = source_kinds[index % len(source_kinds)]
+        sources.append(
+            {
+                'id': f'src-{index:03d}',
+                'title': f'来源 {index:03d}',
+                'kind': kind,
+                'url': f'https://example.com/source/{index:03d}',
+                'publisher': 'Example Publisher',
+                'date': '2026-04-13',
+                'note': f'用于测试的来源 {index:03d}',
+            }
+        )
+
+    return {
+        'meta': {
+            'company_name': 'Example Corp',
+            'ticker': 'EXM',
+            'exchange': 'NASDAQ',
+            'research_date': '2026-04-13',
+            'analyst': 'Codex',
+            'conclusion': '观察',
+            'thesis': '这是一个用于测试最终报告渲染器的样例公司。',
+        },
+        'report_brief': {
+            'what_company_is': '一家样例公司。',
+            'current_action': '继续观察',
+            'why_now': '因为需要验证报告结构。',
+            'core_bet': '研究流程可追溯。',
+            'market_is_pricing': '市场尚未定价。',
+            'main_error_risk': '样例数据过于简化。',
+            'payoff_sources': ['研究效率提升'],
+            'next_checks': ['补真实来源'],
+        },
+        'report_method': {
+            'scope_statement': '测试报告结构、研究过程和来源附录。',
+            'information_collected': ['100 条来源', '单文件最终报告'],
+            'research_modules': ['业务', '管理层', '财务'],
+            'decision_steps': ['初始化', '搜索', '复盘', '组装', '渲染'],
+            'limitations': ['这是自动化测试样例。'],
+        },
+        'current_status': {
+            'as_of': '2026-04-13',
+            'status_summary': '业务状态稳定。',
+            'valuation_summary': '估值中性。',
+            'price_action_summary': '股价波动平稳。',
+            'snapshot_metrics': [{'label': '收入', 'value': '$100M'}],
+            'price_levels': [{'label': '现价', 'value': '$10'}],
+        },
+        'summary': {
+            'support_points': ['来源链路完整'],
+            'risk_points': ['真实研究仍需更多数据'],
+            'open_questions': ['何时补真实案例'],
+            'management_judgment': '管理层待验证。',
+            'valuation_judgment': '估值待验证。',
+        },
+        'investment_case': {
+            'why_now': '因为正在验证 skill。',
+            'macro_context': '中性宏观环境。',
+            'regime_position': '观察期',
+            'regime_mechanism': '暂无明显传导。',
+            'market_expectation': '预期平稳。',
+            'variant_perception': '来自流程完整性。',
+            'falsifiers': ['最终报告未生成'],
+            'monitoring_metrics': ['报告是否可读'],
+        },
+        'company_history': {
+            'eras': [{'name': '起步期', 'date_range': '2018-2020', 'summary': '开始商业化。'}],
+            'timeline': [{'date': '2019-01-01', 'era': '起步期', 'category': '里程碑', 'title': '上线', 'detail': '完成首个产品。'}],
+        },
+        'management': {
+            'leaders': [{'name': 'Alice', 'role': 'CEO', 'tenure_start': '2020-01-01'}],
+            'interviews': [{'leader': 'Alice', 'date': '2026-01-01', 'title': '年度访谈', 'outlet': 'IR', 'url': 'https://example.com/interview', 'takeaway': '强调执行。', 'source_ids': ['src-000']}],
+            'predictions': [{'leader': 'Alice', 'date': '2026-01-01', 'topic': '增长', 'statement': '收入会增长', 'result': '无法验证', 'analysis': '尚待后续验证。', 'source_ids': ['src-001']}],
+            'judgment': '管理层需要持续跟踪。',
+        },
+        'business_quality': {
+            'overview': '业务结构清晰。',
+            'revenue_breakdown': [{'segment': '软件', 'share': '60%', 'trend': '提升', 'comment': '订阅增长'}],
+            'moat_summary': '客户黏性较强。',
+            'moat_points': ['切换成本'],
+            'customers': '中大型企业。',
+            'pricing': '订阅制。',
+            'product_cadence': '按季度更新。',
+            'customer_voice': '用户反馈稳定。',
+        },
+        'industry': {
+            'overview': '行业竞争中等。',
+            'value_chain': '上游云基础设施，下游企业用户。',
+            'competitors': [{'name': 'Peer A', 'position': '直接竞争', 'comment': '规模更大'}],
+        },
+        'financials': {'overview': '财务质量中性。', 'key_points': ['毛利率稳定'], 'red_flags': ['自由现金流待提升']},
+        'capital_allocation': {'overview': '资本配置偏保守。', 'actions': [{'date': '2026-01-01', 'type': 'Capex', 'summary': '继续投入研发'}]},
+        'valuation': {
+            'overview': '估值位于历史中位。',
+            'historical_range': '15x-25x',
+            'peer_comparison': [{'company': 'Peer A', 'comparison': '估值略低'}],
+            'scenarios': [{'name': '基准', 'thesis': '维持增长', 'implication': '估值稳定'}],
+        },
+        'market_behavior': {
+            'overview': '市场关注盈利拐点。',
+            'regime_context': '风险偏好中性。',
+            'stock_phases': [{'name': '震荡期', 'date_range': '2025-2026', 'summary': '区间波动'}],
+            'style_exposures': ['成长风格'],
+        },
+        'crisis_archive': {'cases': [{'date': '2025-06-01', 'title': '供应链波动', 'summary': '短期影响交付。'}]},
+        'debate': {'bull_case': '产品扩张顺利。', 'bear_case': '盈利兑现慢。', 'mispricing_hypothesis': '市场低估流程透明度。'},
+        'investor_lenses': {
+            'overview': '不同框架结论不同。',
+            'views': [{
+                'investor': '巴菲特',
+                'framework_focus': '护城河与资本回报',
+                'fit_assessment': '中性',
+                'would_likely_invest': '暂不买入',
+                'why': '护城河仍需观察。',
+                'positives': ['流程透明'],
+                'concerns': ['现金流仍需验证'],
+                'must_believe': ['盈利能力会改善'],
+                'judgment_change_conditions': ['自由现金流持续转正'],
+                'key_checks': [{'criterion': '现金流', 'assessment': '待验证', 'evidence': '样例数据'}],
+            }],
+        },
+        'research_process': {
+            'workflow_summary': '已完成一轮完整研究闭环。',
+            'todo_summary': [{'module': 'business-quality', 'status': '已完成', 'progress': '1/1', 'useful_source_count': 12, 'summary': '业务模块已完成。'}],
+            'search_cycles': [{'query': 'Example annual report', 'intent': '补一级来源', 'outcome': 'evidence', 'decision': '进入下一轮', 'candidate_result_count': 5, 'timestamp': '2026-04-13T10:00:00Z', 'todo_title': '补齐一级来源'}],
+            'completion_reason': '测试报告已满足渲染要求。',
+            'next_actions': ['继续补真实数据'],
+            'open_items': [{'title': '补真实样本', 'module': 'source-coverage', 'priority': 'P1', 'status': 'todo'}],
+            'current_stage': 'report_ready',
+            'layer_counts': {'raw': 10, 'working': 6, 'promoted': 100},
+            'review_cycles': [{'timestamp': '2026-04-13T11:00:00Z', 'decision': '进入组装', 'next_actions': ['生成文档']}],
+        },
+        'open_questions': {'items': [{'text': '后续补真实公司案例', 'priority': 'P1'}]},
+        'sources': {'items': sources},
+    }

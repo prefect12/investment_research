@@ -8,7 +8,7 @@ import json
 import sys
 from pathlib import Path
 
-from bundle_schema import assemble_dossier, bundle_path_from_input, load_bundle, validate_bundle
+from bundle_schema import append_artifact_record, assemble_dossier, bundle_path_from_input, load_bundle, save_bundle, validate_bundle
 from dossier_schema import validate_dossier
 
 
@@ -55,6 +55,19 @@ def main() -> int:
     output_path = Path(args.output).expanduser() if args.output else bundle_path.parent / "dossier.json"
     output_path.parent.mkdir(parents=True, exist_ok=True)
     output_path.write_text(json.dumps(dossier, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    append_artifact_record(
+        bundle,
+        owner="system-assembler",
+        module="final-assembly",
+        path=str(output_path),
+        kind="dossier-json",
+        title="最终 dossier JSON",
+        note="assemble_dossier_from_bundle.py 已完成组装",
+        todo_ids=["todo-dossier-assembly"],
+        layer="artifacts",
+        value_tier="used_in_dossier",
+    )
+    save_bundle(bundle, bundle_path)
 
     print(f"[完成] dossier: {output_path}")
     print(f"[来源数] {len(dossier.get('sources', {}).get('items', []))}")

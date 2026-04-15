@@ -59,9 +59,15 @@ def main() -> int:
     print(f"- todo_in_progress: {progress['todo_in_progress']}")
     print(f"- todo_blocked: {progress['todo_blocked']}")
     print(f"- todo_todo: {progress['todo_todo']}")
+    print(f"- active_todo_count: {progress['active_todo_count']}")
     print(f"- open_p0_count: {progress['open_p0_count']}")
     print(f"- open_p1_count: {progress['open_p1_count']}")
+    print(f"- open_p2_count: {progress['open_p2_count']}")
     print(f"- completion_percent: {progress['completion_percent']}%")
+    print(f"- pending_search_count: {progress['pending_search_count']}")
+    print(f"- non_blocking_open_question_count: {progress['non_blocking_open_question_count']}")
+    print(f"- completed_validation_steps: {', '.join(progress['completed_validation_steps']) or '无'}")
+    print(f"- missing_validation_steps: {', '.join(progress['missing_validation_steps']) or '无'}")
     if progress['focus_parent_todo']:
         print(f"- focus_parent_todo: {progress['focus_parent_todo']}")
     if progress['focus_question_todo']:
@@ -80,7 +86,24 @@ def main() -> int:
     print(f"- artifact_records: {progress['artifact_records']}")
     print(f"- search_journal: {progress['search_journal']}")
     print(f"- review_cycles: {progress['review_cycles']}")
+    print(f"- pending_search_count: {progress['pending_search_count']}")
     print(f"- promoted_source_count: {progress['promoted_source_count']}")
+
+    if progress["foundation_ready_missing"] or progress["module_ready_missing"] or progress["report_ready_missing"]:
+        print("")
+        print("[Gate 缺口]")
+        if progress["foundation_ready_missing"]:
+            print("- foundation_ready_missing:")
+            for item in progress["foundation_ready_missing"][:6]:
+                print(f"  - {item}")
+        if progress["module_ready_missing"]:
+            print("- module_ready_missing:")
+            for item in progress["module_ready_missing"][:6]:
+                print(f"  - {item}")
+        if progress["report_ready_missing"]:
+            print("- report_ready_missing:")
+            for item in progress["report_ready_missing"][:8]:
+                print(f"  - {item}")
 
     print("")
     print("[目录文件数]")
@@ -120,7 +143,7 @@ def main() -> int:
 
     print("")
     if progress["report_ready"]:
-        print("[状态] bundle 已满足完整报告门槛")
+        print("[状态] bundle 已满足公开源极限版完整交付门槛")
         return 0
     if bundle_has_research_content(bundle):
         print("[状态] bundle 已进入研究闭环，后续继续按 todo -> search -> review 推进")

@@ -1,4 +1,4 @@
 interface:
   display_name: "股票研究报告"
   short_description: "todo 驱动、多 agent 并行、全量过程落盘的上市公司研究与 dossier 生成"
-  default_prompt: "使用 $equity-investment-dossier 对一家上市公司做多 agent 投资研究。先初始化本地 research bundle，以 todo 驱动推进；每轮搜索先记录 query 与候选结果，再把来源、提取、笔记、artifact 分层落盘，并在 review 后持续调整搜索方向，直到完成 dossier 组装与多页 HTML 报告。"
+  default_prompt: "使用 $equity-investment-dossier 对一家上市公司做多 agent 投资研究。默认直接按公开源极限完整版推进：先初始化本地 research bundle，建立并持续更新 todo；任何实际搜索都必须先用 record_search_round.py --mode start 预落盘 query，再在拿到结果后立刻用同一个 query_id/search_id 执行 --mode complete 回填候选结果；来源、提取、笔记、artifact 必须分层落盘；每轮 review 都要回看已有证据、补派生 todo、必要时把尾部 P1/P2 问题转成 non-blocking open questions；持续循环直到 active todo 清零、关键父级 todo 完成、promoted 来源与来源 bucket 达标，并完成 dossier 组装、校验与最终报告渲染。为避免上下文爆炸，不要连续长时间只搜索不复盘；最多连续 2-3 轮 search 就 review 一次，并在 review 后自动写 checkpoint。对话里只保留短摘要，长来源原文与候选结果明细直接落盘，不要大段粘贴到会话。"

@@ -12,6 +12,7 @@ from typing import Any
 from bundle_schema import (
     ALLOWED_TODO_STAGES,
     SEARCH_REVIEW_SUBDIR,
+    append_non_blocking_open_questions,
     append_review_cycle,
     bundle_dir_from_input,
     bundle_path_from_input,
@@ -22,6 +23,7 @@ from bundle_schema import (
     unique_id,
     update_todo_items,
     upsert_todo_items,
+    write_bundle_checkpoint,
 )
 
 
@@ -38,8 +40,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--decision", default="", help="本轮复盘的方向决策")
     parser.add_argument("--next-action", action="append", default=[], help="复盘后决定的下一步动作，可重复传入")
     parser.add_argument("--new-todo-json", action="append", default=[], help="新派生 todo 的 JSON 文件；可为单对象或数组")
+    parser.add_argument("--open-question-json", action="append", default=[], help="转为 non-blocking open question 的 JSON 文件；可为单对象或数组")
     parser.add_argument("--set-status", action="append", default=[], help="按 todo_id=status 更新状态，可重复传入")
     parser.add_argument("--append-note", action="append", default=[], help="按 todo_id=note 追加笔记，可重复传入")
+    parser.add_argument("--no-checkpoint", action="store_true", help="本次 review 完成后不自动写入 checkpoint")
     return parser.parse_args()
 
 
@@ -71,17 +75,31 @@ def parse_note_pairs(values: list[str]) -> dict[str, list[str]]:
     return parsed
 
 
-def load_todo_items(path_str: str) -> list[dict[str, Any]]:
+def load_object_items(path_str: str, *, label: str) -> list[dict[str, Any]]:
     path = Path(path_str).expanduser()
     data = json.loads(path.read_text(encoding="utf-8"))
     if isinstance(data, dict):
         return [data]
     if isinstance(data, list) and all(isinstance(item, dict) for item in data):
         return data
-    raise ValueError(f"{path} 必须是 JSON 对象或对象数组")
+    raise ValueError(f"{path} 必须是 {label} JSON 对象或对象数组")
 
 
-def infer_stage(bundle: dict[str, Any], explicit_stage: str, todo_ids: list[str], new_todos: list[dict[str, Any]]) -> str:
+def load_todo_items(path_str: str) -> list[dict[str, Any]]:
+    return load_object_items(path_str, label="todo")
+
+
+def load_open_question_items(path_str: str) -> list[dict[str, Any]]:
+    return load_object_items(path_str, label="open question")
+
+
+def infer_stage(
+    bundle: dict[str, Any],
+    explicit_stage: str,
+    todo_ids: list[str],
+    new_todos: list[dict[str, Any]],
+    open_questions: list[dict[str, Any]],
+) -> str:
     if explicit_stage:
         return explicit_stage
     workflow = bundle.get("workflow", {}) if isinstance(bundle.get("workflow"), dict) else {}
@@ -99,6 +117,10 @@ def infer_stage(bundle: dict[str, Any], explicit_stage: str, todo_ids: list[str]
         stage = str(item.get("stage", "")).strip()
         if stage in ALLOWED_TODO_STAGES:
             return stage
+    for item in open_questions:
+        todo_item = todo_index.get(str(item.get("from_todo_id", "")).strip())
+        if todo_item and str(todo_item.get("stage", "")).strip() in ALLOWED_TODO_STAGES:
+            return str(todo_item.get("stage", "")).strip()
     current_stage = str(workflow.get("current_stage", "")).strip()
     if current_stage in {"initialized", "research_started", "foundation_ready"}:
         return "foundation"
@@ -118,6 +140,15 @@ def decorate_new_todos(new_todos: list[dict[str, Any]], review_id: str, stage: s
         if todo.get("parent_id") and not todo.get("level"):
             todo["level"] = "question"
         decorated.append(todo)
+    return decorated
+
+
+def decorate_open_questions(open_questions: list[dict[str, Any]], review_id: str) -> list[dict[str, Any]]:
+    decorated: list[dict[str, Any]] = []
+    for item in open_questions:
+        question = dict(item)
+        question.setdefault("linked_review_id", review_id)
+        decorated.append(question)
     return decorated
 
 
@@ -169,6 +200,8 @@ def main() -> int:
     args = parse_args()
     bundle_path = bundle_path_from_input(Path(args.bundle).expanduser())
     bundle_dir = bundle_dir_from_input(bundle_path)
+    checkpoint_info: dict[str, str] | None = None
+    checkpoint_warning = ""
 
     try:
         bundle = load_bundle(bundle_path)
@@ -185,6 +218,7 @@ def main() -> int:
                 str(args.decision).strip(),
                 args.next_action,
                 args.new_todo_json,
+                args.open_question_json,
                 args.set_status,
                 args.append_note,
             ]
@@ -195,16 +229,29 @@ def main() -> int:
         raw_new_todos: list[dict[str, Any]] = []
         for path_str in args.new_todo_json:
             raw_new_todos.extend(load_todo_items(path_str))
-        stage = infer_stage(bundle, args.stage or "", reviewed_todo_ids, raw_new_todos)
+        raw_open_questions: list[dict[str, Any]] = []
+        for path_str in args.open_question_json:
+            raw_open_questions.extend(load_open_question_items(path_str))
+        stage = infer_stage(bundle, args.stage or "", reviewed_todo_ids, raw_new_todos, raw_open_questions)
         new_todos = decorate_new_todos(raw_new_todos, review_id, stage)
+        open_questions = decorate_open_questions(raw_open_questions, review_id)
 
         progress_before = bundle_progress(bundle)
         status_updates = parse_status_pairs(args.set_status)
         note_updates = parse_note_pairs(args.append_note)
+        for item in open_questions:
+            from_todo_id = str(item.get("from_todo_id", "")).strip()
+            text = str(item.get("text", "")).strip()
+            if not from_todo_id:
+                continue
+            status_updates.setdefault(from_todo_id, "dropped")
+            if text:
+                note_updates.setdefault(from_todo_id, []).append(f"在 {review_id} 中转为 non-blocking open question：{text}")
 
         created_todo_ids = upsert_todo_items(bundle, new_todos) if new_todos else []
         if status_updates or note_updates:
             update_todo_items(bundle, status_updates=status_updates, note_updates=note_updates)
+        created_open_question_ids = append_non_blocking_open_questions(bundle, open_questions) if open_questions else []
 
         review_entry = append_review_cycle(
             bundle,
@@ -247,13 +294,27 @@ def main() -> int:
             "reviewed_result_ids": reviewed_result_ids,
             "reviewed_todo_ids": reviewed_todo_ids,
             "created_todo_ids": created_todo_ids,
+            "created_open_question_ids": created_open_question_ids,
             "status_updates": status_updates,
             "note_updates": note_updates,
+            "open_questions": open_questions,
         }
         saved_path = save_review_snapshot(bundle_dir, review_id=review_id, stage=stage, payload=review_snapshot)
         sync_review_record(bundle, review_id, stage_after=progress_after["current_stage"], saved_path=saved_path)
 
         save_bundle(bundle, bundle_path)
+        if not args.no_checkpoint:
+            try:
+                checkpoint_info = write_bundle_checkpoint(
+                    bundle,
+                    bundle_path,
+                    stage=stage,
+                    label="review-checkpoint",
+                    owner=args.owner,
+                )
+                save_bundle(bundle, bundle_path)
+            except Exception as checkpoint_exc:  # noqa: BLE001
+                checkpoint_warning = str(checkpoint_exc)
         final_progress = bundle_progress(bundle)
     except Exception as exc:  # noqa: BLE001
         print(f"[错误] 无法记录研究复盘: {exc}")
@@ -263,11 +324,18 @@ def main() -> int:
     print(f"[review] {review_id} -> {saved_path}")
     if created_todo_ids:
         print(f"[新增 todo] {', '.join(created_todo_ids)}")
+    if created_open_question_ids:
+        print(f"[新增开放问题] {', '.join(created_open_question_ids)}")
     if reviewed_todo_ids:
         print(f"[已关联 todo] {', '.join(reviewed_todo_ids)}")
+    if checkpoint_info:
+        print(f"[checkpoint] {checkpoint_info['latest_markdown']}")
+    elif checkpoint_warning:
+        print(f"[警告] checkpoint 写入失败: {checkpoint_warning}")
     print(
         f"[累计] stage={final_progress['current_stage']} reviews={final_progress['review_cycles']} "
-        f"todos={final_progress['todo_total']} done={final_progress['todo_done']} in_progress={final_progress['todo_in_progress']}"
+        f"todos={final_progress['todo_total']} done={final_progress['todo_done']} "
+        f"in_progress={final_progress['todo_in_progress']} open_questions={final_progress['non_blocking_open_question_count']}"
     )
     return 0
 
